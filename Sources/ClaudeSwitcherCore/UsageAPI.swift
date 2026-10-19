@@ -11,8 +11,8 @@ public enum UsageAPI {
     public static func keychainService(_ account: Account, paths: Paths) -> String {
         switch account {
         case .a: return "Claude Code-credentials"
-        case .b:
-            let dir = paths.configJSON(.b).deletingLastPathComponent().path(percentEncoded: false)
+        default:
+            let dir = paths.configDir(account).path(percentEncoded: false)
             let trimmed = dir.hasSuffix("/") ? String(dir.dropLast()) : dir
             let digest = SHA256.hash(data: Data(trimmed.utf8))
             return "Claude Code-credentials-" + digest.prefix(4).map { String(format: "%02x", $0) }.joined()

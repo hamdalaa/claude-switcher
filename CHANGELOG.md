@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- **Continue a Conversation:** pick up a recent conversation on the active account, e.g. carry on with B after A hits its limit (`claude --resume`, history is shared)
+- **Up to four accounts** (A–D): Add Account…, Remove Account…; Auto picks across all of them; `ccx` and the status line support c and d
+- **Name your accounts** ("Work", "Personal"): right-click → Rename…
+- **Welcome window** on first launch: confirms account A, adds account B, offers the `claude` hook and open at login (Settings → Show Welcome)
+- **Update check:** once a day against GitHub releases, with one-click update (Homebrew or release page); can be turned off
+
 ## 1.1.1
 
 - Menu bar shows both limits for the active account: `D:56% W:87%` (D = 5-hour window, W = weekly)

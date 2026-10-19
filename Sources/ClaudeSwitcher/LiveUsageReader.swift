@@ -124,9 +124,11 @@ actor LiveUsageReader {
     /// `claude auth status` makes Claude Code refresh its own token if needed. Throttled.
     private func renew(_ account: Account, state: inout State, now: Date) async -> Credentials? {
         if let last = state.lastRenew, now.timeIntervalSince(last) < Self.renewInterval { return nil }
+        // claude creates CLAUDE_CONFIG_DIR if missing; never resurrect a just-removed account.
+        guard account == .a || FileManager.default.fileExists(atPath: paths.configDir(account).path) else { return nil }
         state.lastRenew = now
         var extra: [String: String] = [:]
-        if account == .b { extra["CLAUDE_CONFIG_DIR"] = paths.configJSON(.b).deletingLastPathComponent().path }
+        if account != .a { extra["CLAUDE_CONFIG_DIR"] = paths.configDir(account).path }
         var env = await System.toolEnvironment(extra: extra)
         if account == .a { env["CLAUDE_CONFIG_DIR"] = nil }
         _ = await System.run("/usr/bin/env", ["claude", "auth", "status"], environment: env)

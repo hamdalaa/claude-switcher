@@ -59,21 +59,50 @@ private func usage(_ five: Int, _ seven: Int) -> Usage {
     #expect(store.mode() == .auto)
 }
 
+private func pick(_ mode: Mode, _ usage: [Account: Usage], signedIn: Set<Account>,
+                  configured: Set<Account> = Set(Account.allCases)) -> Account {
+    AccountStore.pick(mode: mode, usage: usage, signedIn: signedIn, configured: configured)
+}
+
 @Test func pickHonoursPin() {
-    #expect(AccountStore.pick(mode: .pinned(.b), a: usage(0, 0), b: usage(99, 99), bSignedIn: true) == .b)
+    #expect(pick(.pinned(.b), [.a: usage(0, 0), .b: usage(99, 99)], signedIn: [.a, .b]) == .b)
+}
+
+@Test func pinToUnconfiguredAccountFallsBackToAuto() {
+    #expect(pick(.pinned(.c), [.a: usage(10, 10), .b: usage(5, 5)], signedIn: [.a, .b], configured: [.a, .b]) == .b)
 }
 
 @Test func pickStaysOnAWhenBNotSignedIn() {
-    #expect(AccountStore.pick(mode: .auto, a: usage(95, 95), b: nil, bSignedIn: false) == .a)
+    #expect(pick(.auto, [.a: usage(95, 95)], signedIn: [.a]) == .a)
 }
 
 @Test func pickAvoidsFullAccount() {
-    #expect(AccountStore.pick(mode: .auto, a: usage(10, 92), b: usage(60, 10), bSignedIn: true) == .b)
-    #expect(AccountStore.pick(mode: .auto, a: usage(60, 10), b: usage(90, 10), bSignedIn: true) == .a)
+    #expect(pick(.auto, [.a: usage(10, 92), .b: usage(60, 10)], signedIn: [.a, .b]) == .b)
+    #expect(pick(.auto, [.a: usage(60, 10), .b: usage(90, 10)], signedIn: [.a, .b]) == .a)
 }
 
 @Test func pickPrefersLowerFiveHourThenWeekly() {
-    #expect(AccountStore.pick(mode: .auto, a: usage(40, 10), b: usage(20, 80), bSignedIn: true) == .b)
-    #expect(AccountStore.pick(mode: .auto, a: usage(20, 50), b: usage(20, 40), bSignedIn: true) == .b)
-    #expect(AccountStore.pick(mode: .auto, a: usage(20, 40), b: usage(20, 40), bSignedIn: true) == .a)
+    #expect(pick(.auto, [.a: usage(40, 10), .b: usage(20, 80)], signedIn: [.a, .b]) == .b)
+    #expect(pick(.auto, [.a: usage(20, 50), .b: usage(20, 40)], signedIn: [.a, .b]) == .b)
+    #expect(pick(.auto, [.a: usage(20, 40), .b: usage(20, 40)], signedIn: [.a, .b]) == .a)
+}
+
+@Test func pickAcrossFourAccounts() {
+    let all: [Account: Usage] = [.a: usage(95, 10), .b: usage(30, 99), .c: usage(50, 20), .d: usage(40, 60)]
+    #expect(pick(.auto, all, signedIn: [.a, .b, .c, .d]) == .d)          // a, b full → lowest 5h of c, d
+    #expect(pick(.auto, all, signedIn: [.a, .b, .c]) == .c)
+    #expect(pick(.auto, all, signedIn: [.a, .b]) == .b)                   // all full → lowest 5h
+    #expect(pick(.auto, [:], signedIn: []) == .a)
+}
+
+@Test func configuredAccountsFollowFolders() throws {
+    let home = try tempHome()
+    let store = AccountStore(paths: Paths(home: home))
+    #expect(store.configuredAccounts() == [.a])
+    #expect(store.nextFreeAccount() == .b)
+    try FileManager.default.createDirectory(at: home.appending(path: ".claude-c"), withIntermediateDirectories: true)
+    #expect(store.configuredAccounts() == [.a, .c])
+    #expect(store.nextFreeAccount() == .b)
+    #expect(store.paths.configJSON(.c).path == home.appending(path: ".claude-c/.claude.json").path)
+    #expect(store.snapshot().states.map(\.account) == [.a, .c])
 }

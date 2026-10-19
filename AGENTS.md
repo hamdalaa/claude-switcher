@@ -3,8 +3,8 @@
 Instructions for AI coding agents (Claude Code, Codex, Cursor, …) working on this repository.
 
 ## What this is
-A macOS menu bar app plus a bash CLI (`ccx`) that switch new Claude Code sessions between two accounts:
-A = `~/.claude`, B = `~/.claude-b` (via `CLAUDE_CONFIG_DIR`, sharing A's config through symlinks).
+A macOS menu bar app plus a bash CLI (`ccx`) that switch new Claude Code sessions between up to four accounts:
+A = `~/.claude`, B–D = `~/.claude-b|c|d` (via `CLAUDE_CONFIG_DIR`, sharing A's config through symlinks).
 
 ## Layout
 | Path | What |

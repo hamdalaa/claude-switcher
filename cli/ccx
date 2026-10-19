@@ -1,57 +1,60 @@
 #!/usr/bin/env bash
-# ccx — run Claude Code on one of two subscription accounts, with shared (synced) config.
+# ccx — run Claude Code on one of up to four subscription accounts, with shared (synced) config.
 # Part of Claude Switcher (MIT). https://github.com/hamdalaa/claude-switcher
 # ccx-managed-by: claude-switcher
 #
-#   ccx              start on the switched-to account (pinned, else whichever has more headroom)
-#   ccx a|b [...]    start on a specific account (extra args go to claude)
-#   ccx run [...]    like plain ccx, but passes ALL args to claude (used by the `claude` shell hook)
-#   ccx use a|b|auto pin the account new sessions start on (auto = most headroom)
-#   ccx which        print the account the next session would use
-#   ccx login a|b    sign in an account (opens the browser)
-#   ccx logout a|b   sign out an account
-#   ccx status       who is signed in where + last-known usage
-#   ccx sync         re-link shared config into account B (runs on every B launch)
-#   ccx version      print the version
+#   ccx                  start on the switched-to account (pinned, else the one with most headroom)
+#   ccx a|b|c|d [...]    start on a specific account (extra args go to claude)
+#   ccx run [...]        like plain ccx, but passes ALL args to claude (used by the `claude` hook)
+#   ccx use <acct>|auto  pin the account new sessions start on (auto = most headroom)
+#   ccx which            print the account the next session would use
+#   ccx login <acct>     sign in an account (opens the browser); signing in C or D adds it
+#   ccx logout <acct>    sign out an account
+#   ccx remove <acct>    sign out and remove account B, C or D (its folder goes to the Trash)
+#   ccx status           who is signed in where + last-known usage
+#   ccx sync             re-link shared config into the other accounts (runs on every launch)
+#   ccx version          print the version
 #
-# Account A is Claude Code's normal config (~/.claude); account B lives in ~/.claude-b and
-# shares A's settings, skills, agents, commands, memory and history through symlinks.
+# Account A is Claude Code's normal config (~/.claude). B, C and D live in ~/.claude-b, -c, -d
+# and share A's settings, skills, agents, commands, memory and history through symlinks.
 #
 # Safety: each account keeps its own OAuth token in its own Keychain item — Claude Code
 # namespaces the item by a hash of CLAUDE_CONFIG_DIR. This script never reads, copies or
 # moves tokens; switching just picks which config dir claude starts with.
 set -euo pipefail
 
-CCX_VERSION="1.1.1"
+CCX_VERSION="1.2.0"
 
 A_DIR="$HOME/.claude"
-B_DIR="$HOME/.claude-b"
 STATE_ROOT="$HOME/.claude-accounts"
 STATE_DIR="$STATE_ROOT/usage"
 PIN_FILE="$STATE_ROOT/default"
 LIMIT_PCT=90
+ACCOUNTS=(a b c d)
 
 # Everything account-independent is shared with account A via symlinks.
 SHARED=(CLAUDE.md AGENTS.md rules skills agents commands hooks scripts plugins output-styles
         settings.json settings.local.json keybindings.json themes projects history.jsonl
         file-history plans todos)
 
-# Directories created in A if missing, so B shares them from the first launch.
+# Directories created in A if missing, so other accounts share them from the first launch.
 SHARED_DIRS=(projects file-history todos plans)
 
-# Top-level ~/.claude.json keys copied A → B on launch. Never the login (oauthAccount etc.).
+# Top-level ~/.claude.json keys copied from A on launch. Never the login (oauthAccount etc.).
 SYNC_KEYS='["mcpServers","theme","hasCompletedOnboarding","lastOnboardingVersion","editorMode","autoUpdates"]'
 
 die() { echo "ccx: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$2"; }
 upper() { tr '[:lower:]' '[:upper:]' <<<"$1"; }
-dir_of() { [ "$1" = b ] && echo "$B_DIR" || echo "$A_DIR"; }
-json_of() { [ "$1" = b ] && echo "$B_DIR/.claude.json" || echo "$HOME/.claude.json"; }
-check_acct() { [[ "${1:-}" =~ ^[ab]$ ]] || die "account must be 'a' or 'b'"; }
+dir_of() { [ "$1" = a ] && echo "$A_DIR" || echo "$HOME/.claude-$1"; }
+json_of() { [ "$1" = a ] && echo "$HOME/.claude.json" || echo "$HOME/.claude-$1/.claude.json"; }
+check_acct() { [[ "${1:-}" =~ ^[a-d]$ ]] || die "account must be a, b, c or d"; }
+is_configured() { [ "$1" = a ] || [ -d "$(dir_of "$1")" ]; }
+configured() { local x; for x in "${ACCOUNTS[@]}"; do if is_configured "$x"; then echo "$x"; fi; done; }
 
 with_env() {  # run a command under account $1's config dir
   local acct=$1; shift
-  if [ "$acct" = b ]; then CLAUDE_CONFIG_DIR="$B_DIR" "$@"; else env -u CLAUDE_CONFIG_DIR "$@"; fi
+  if [ "$acct" = a ]; then env -u CLAUDE_CONFIG_DIR "$@"; else CLAUDE_CONFIG_DIR="$(dir_of "$acct")" "$@"; fi
 }
 
 email_of() {  # signed-in email from the account's config, empty if none
@@ -68,7 +71,7 @@ usage_of() {  # prints "<5h> <7d>" integers; expired window = 0, unknown = 0
   [ -f "$file" ] || { echo "0 0"; return; }
   jq -r --argjson now "$(date +%s)" '
     def pct(w): if w == null or (w.resets_at // 0) < $now then 0 else (w.used_percentage // 0 | floor) end;
-    "\(pct(.five_hour)) \(pct(.seven_day))"' "$file"
+    "\(pct(.five_hour)) \(pct(.seven_day))"' "$file" 2>/dev/null || echo "0 0"
 }
 
 resets_of() {  # human-readable reset time of the 5h window, if known and in the future
@@ -79,57 +82,73 @@ resets_of() {  # human-readable reset time of the 5h window, if known and in the
   return 0
 }
 
+# Same rule as the app: a pin wins (if that account is set up); otherwise, among signed-in
+# accounts, prefer ones that aren't full, then the lowest 5-hour use, then the lowest weekly
+# use, then the earliest letter. Falls back to A.
 pick() {
   local pin; pin=$(cat "$PIN_FILE" 2>/dev/null || true)
-  [[ "$pin" =~ ^[ab]$ ]] && { echo "$pin"; return; }
-  # An account that was never signed in can't be picked.
-  [ -z "$(email_of b)" ] && { echo a; return; }
-  local a5 a7 b5 b7
-  read -r a5 a7 <<<"$(usage_of a)"
-  read -r b5 b7 <<<"$(usage_of b)"
-  local a_full=$(( a5 >= LIMIT_PCT || a7 >= LIMIT_PCT ))
-  local b_full=$(( b5 >= LIMIT_PCT || b7 >= LIMIT_PCT ))
-  if   (( a_full && !b_full )); then echo b
-  elif (( b_full && !a_full )); then echo a
-  elif (( a5 != b5 )); then (( a5 < b5 )) && echo a || echo b
-  else (( a7 <= b7 )) && echo a || echo b
-  fi
+  if [[ "$pin" =~ ^[a-d]$ ]] && is_configured "$pin"; then echo "$pin"; return; fi
+  local best="" best5=0 best7=0 bestfull=1 x five seven full
+  for x in $(configured); do
+    [ -n "$(email_of "$x")" ] || continue
+    read -r five seven <<<"$(usage_of "$x")"
+    full=$(( five >= LIMIT_PCT || seven >= LIMIT_PCT ))
+    if [ -z "$best" ] || (( full < bestfull )) ||
+       (( full == bestfull && (five < best5 || (five == best5 && seven < best7)) )); then
+      best=$x best5=$five best7=$seven bestfull=$full
+    fi
+  done
+  echo "${best:-a}"
 }
 
-sync_links() {
-  mkdir -p "$B_DIR" "$STATE_DIR"
-  chmod 700 "$B_DIR"
+sync_links() {  # sync_links <acct>: link A's shared config into that account's folder
+  local target; target=$(dir_of "$1")
+  mkdir -p "$target" "$STATE_DIR"
+  chmod 700 "$target"
   local dir item
   for dir in "${SHARED_DIRS[@]}"; do mkdir -p "$A_DIR/$dir"; done
   for item in "${SHARED[@]}"; do
     [ -e "$A_DIR/$item" ] || continue
-    [ -L "$B_DIR/$item" ] && continue
-    if [ -e "$B_DIR/$item" ]; then echo "ccx: skip $item (real file in $B_DIR, not linking over it)" >&2; continue; fi
-    ln -s "$A_DIR/$item" "$B_DIR/$item"
+    [ -L "$target/$item" ] && continue
+    if [ -e "$target/$item" ]; then echo "ccx: skip $item (real file in $target, not linking over it)" >&2; continue; fi
+    ln -s "$A_DIR/$item" "$target/$item"
   done
 }
 
-sync_json() {  # merge shared ~/.claude.json keys into B's, keeping B's login untouched
-  local src="$HOME/.claude.json" dst="$B_DIR/.claude.json" tmp
+sync_json() {  # sync_json <acct>: merge shared ~/.claude.json keys in, keeping that account's login
+  local target src="$HOME/.claude.json" dst tmp
+  target=$(dir_of "$1"); dst="$target/.claude.json"
   [ -f "$src" ] || return 0
-  tmp=$(mktemp "$B_DIR/.claude.json.XXXXXX") || return 1
+  tmp=$(mktemp "$target/.claude.json.XXXXXX") || return 1
   if [ ! -f "$dst" ]; then
-    echo '{}' > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$dst" || { rm -f "$tmp"; return 1; }
-    tmp=$(mktemp "$B_DIR/.claude.json.XXXXXX") || return 1
+    echo '{}' > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$dst" || { rm -f -- "${tmp:?}"; return 1; }
+    tmp=$(mktemp "$target/.claude.json.XXXXXX") || return 1
   fi
   if jq --argjson keys "$SYNC_KEYS" --slurpfile a "$src" '
        . as $b | reduce $keys[] as $k ($b; if ($a[0] | has($k)) then .[$k] = $a[0][$k] else . end)
      ' "$dst" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
-    # Unchanged → don't rewrite, so a running B session's own writes are never raced.
-    if cmp -s "$tmp" "$dst"; then rm -f "$tmp"; return 0; fi
+    # Unchanged → don't rewrite, so a running session's own writes are never raced.
+    if cmp -s "$tmp" "$dst"; then rm -f -- "${tmp:?}"; return 0; fi
     chmod 600 "$tmp" && mv "$tmp" "$dst"
   else
-    rm -f "$tmp"; echo "ccx: couldn't sync settings into B's .claude.json (left unchanged)" >&2
+    rm -f -- "${tmp:?}"; echo "ccx: couldn't sync settings into $(upper "$1")'s .claude.json (left unchanged)" >&2
     return 1
   fi
 }
 
-sync_all() { sync_links; sync_json; }
+sync_account() {
+  if [ "$1" = a ]; then return 0; fi
+  sync_links "$1"
+  sync_json "$1"
+}
+
+sync_all() {  # every configured account except A
+  local x status=0
+  for x in $(configured); do
+    if [ "$x" != a ]; then sync_account "$x" || status=1; fi
+  done
+  return $status
+}
 
 # Signed in some other way (API key, Bedrock, Vertex)? Then there's no Claude login to check.
 uses_other_auth() {
@@ -143,20 +162,40 @@ run_on() {
   # Inherited from a parent Claude session these make claude think it's a child (no transcripts).
   unset CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED \
         CLAUDE_PID CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH
-  if [ "$acct" = b ]; then sync_all || true; fi
-  # Only explicit `ccx a|b` offers to sign in; `ccx run` (the `claude` hook) stays transparent,
+  sync_account "$acct" || true
+  # Only explicit `ccx <acct>` offers to sign in; `ccx run` (the `claude` hook) stays transparent,
   # so `claude --version`, `claude -p …` and scripts never get a login prompt.
   if [ "$prompt" = yes ] && ! uses_other_auth && [ -z "$(email_of "$acct")" ] && ! logged_in "$acct"; then
     echo "ccx: account $(upper "$acct") isn't signed in yet — signing in first." >&2
     with_env "$acct" claude auth login
   fi
-  if [ "$acct" = b ]; then CLAUDE_CONFIG_DIR="$B_DIR" exec claude "$@"
-  else exec env -u CLAUDE_CONFIG_DIR claude "$@"; fi
+  if [ "$acct" = a ]; then exec env -u CLAUDE_CONFIG_DIR claude "$@"
+  else CLAUDE_CONFIG_DIR="$(dir_of "$acct")" exec claude "$@"; fi
+}
+
+remove_account() {
+  local acct=$1 target
+  [ "$acct" = a ] && die "account A is Claude Code's own config and can't be removed"
+  target=$(dir_of "$acct")
+  [ -d "$target" ] || die "account $(upper "$acct") isn't set up"
+  # Only ever delete our own ~/.claude-<b|c|d> folder (never a path built from an empty variable).
+  [[ -n "$HOME" && "$target" == "$HOME/.claude-"[b-d] ]] || die "refusing to remove $target"
+  if command -v claude >/dev/null 2>&1; then
+    with_env "$acct" claude auth logout >/dev/null 2>&1 || true
+  else
+    echo "ccx: claude not found, so account $(upper "$acct") couldn't be signed out (its login stays in the Keychain)" >&2
+  fi
+  # Move, don't delete: anything the account kept on its own stays recoverable from the Trash.
+  mkdir -p "$HOME/.Trash"
+  mv -- "${target:?}" "$HOME/.Trash/.claude-$acct-$(date +%Y%m%d-%H%M%S)"
+  rm -f -- "${STATE_DIR:?}/${acct:?}.json"
+  if [ "$(cat "$PIN_FILE" 2>/dev/null || true)" = "$acct" ]; then rm -f -- "${PIN_FILE:?}"; fi
+  echo "account $(upper "$acct") removed (folder moved to the Trash)"
 }
 
 show_status() {
   local acct five seven reset email pin
-  for acct in a b; do
+  for acct in $(configured); do
     email=$(email_of "$acct")
     read -r five seven <<<"$(usage_of "$acct")"
     reset=$(resets_of "$acct")
@@ -175,23 +214,27 @@ show_status() {
 
 case "${1:-}" in
   version|--version|-v) echo "ccx $CCX_VERSION"; exit 0 ;;
-  -h|--help|help) sed -n '5,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help|help) sed -n '5,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 need jq "jq is required (built into macOS 15+, or: brew install jq)"
 
 case "${1:-}" in
-  a|b)      acct=$1; shift; run_on "$acct" yes "$@" ;;
+  a|b|c|d)  acct=$1; shift; run_on "$acct" yes "$@" ;;
   use)      case "${2:-}" in
-              a|b)  mkdir -p "$STATE_ROOT"; echo "$2" > "$PIN_FILE"; echo "ccx now starts on account $(upper "$2")" ;;
-              auto) rm -f "$PIN_FILE"; echo "ccx now picks the account with more headroom" ;;
-              *)    die "usage: ccx use a|b|auto" ;;
+              a|b|c|d)
+                is_configured "$2" || die "account $(upper "$2") isn't set up yet — run: ccx login $2"
+                mkdir -p "$STATE_ROOT"; echo "$2" > "$PIN_FILE"; echo "ccx now starts on account $(upper "$2")" ;;
+              auto) rm -f -- "${PIN_FILE:?}"; echo "ccx now picks the account with more headroom" ;;
+              *)    die "usage: ccx use a|b|c|d|auto" ;;
             esac ;;
-  login)    check_acct "${2:-}"; need claude "Claude Code isn't installed or isn't on PATH"; if [ "$2" = b ]; then sync_all || true; fi; with_env "$2" claude auth login; show_status ;;
+  login)    check_acct "${2:-}"; need claude "Claude Code isn't installed or isn't on PATH"
+            sync_account "$2" || true; with_env "$2" claude auth login; show_status ;;
   logout)   check_acct "${2:-}"; need claude "Claude Code isn't installed or isn't on PATH"; with_env "$2" claude auth logout ;;
+  remove)   check_acct "${2:-}"; remove_account "$2" ;;
   run)      shift; run_on "$(pick)" no "$@" ;;
   which)    pick ;;
   status|usage) show_status ;;
-  sync|setup)   if sync_all; then echo "account B synced at $B_DIR"; else exit 1; fi ;;
+  sync|setup)   if sync_all; then echo "accounts synced with A's settings"; else exit 1; fi ;;
   *)        acct=$(pick); echo "ccx → account $(upper "$acct")" >&2; run_on "$acct" yes "$@" ;;
 esac

@@ -13,6 +13,7 @@ struct PanelView: View {
             ForEach(model.snapshot.states) { state in
                 AccountRow(
                     state: state,
+                    name: model.names[state.account],
                     isActive: model.snapshot.next == state.account,
                     isAutoPick: model.snapshot.mode == .auto,
                     plan: model.plans[state.account],
@@ -24,8 +25,14 @@ struct PanelView: View {
                     onOpenWeb: { model.openWeb(state.account) },
                     onChoosePicture: { model.chooseAvatar(state.account.rawValue) },
                     onDropPicture: { model.setAvatar(state.account.rawValue, from: $0) },
-                    onRemovePicture: { model.removeAvatar(state.account.rawValue) }
+                    onRemovePicture: { model.removeAvatar(state.account.rawValue) },
+                    onRename: { model.rename(state.account) },
+                    onRemove: state.account == .a ? nil : { model.removeAccount(state.account) }
                 )
+            }
+            if model.canAddAccount {
+                MenuItem(title: "Add Account…") { model.addAccount() }
+                    .help("Sign in another Claude account (up to four)")
             }
 
             if model.showsHookBanner {
@@ -53,6 +60,15 @@ struct PanelView: View {
             if let message = model.message {
                 MenuSeparator()
                 messageRow(message)
+            }
+
+            if let update = model.update {
+                MenuSeparator()
+                MenuItem(title: "Update to \(update.version)…", trailing: model.installedWithHomebrew ? "brew" : nil) {
+                    model.installUpdate()
+                }
+                .foregroundStyle(Color.accentColor)
+                .help(model.installedWithHomebrew ? "Runs brew upgrade --cask claude-switcher" : "Opens the release page")
             }
 
             MenuSeparator()
@@ -94,6 +110,23 @@ struct PanelView: View {
         if active.isSignedIn {
             MenuItem(title: "New Claude Code Session") { model.open(model.snapshot.next) }
                 .help("Opens \(model.terminal.displayName) on account \(label)")
+            if !model.recentSessions.isEmpty {
+                Menu {
+                    Section("Continue on account \(label)") {
+                        ForEach(model.recentSessions) { session in
+                            Button("\(session.title) — \(Self.displayPath(session.directory))") {
+                                model.continueSession(session, on: model.snapshot.next)
+                            }
+                        }
+                    }
+                } label: {
+                    menuLabel("Continue a Conversation")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .help("Pick up a recent conversation on account \(label) — handy when another account hits its limit")
+            }
             if !model.recentProjects.isEmpty {
                 Menu {
                     ForEach(model.recentProjects, id: \.self) { path in

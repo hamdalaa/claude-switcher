@@ -40,11 +40,17 @@ struct SettingsMenu: View {
                     get: { model.notificationsEnabled },
                     set: { model.setNotifications($0) }
                 ))
+                Toggle("Check for Updates Daily", isOn: Binding(
+                    get: { model.checksForUpdates },
+                    set: { model.setChecksForUpdates($0) }
+                ))
             }
 
             Section {
                 Button("Refresh Usage") { Task { await model.refreshLive() } }
-                Button("Re-sync Account B Settings") { model.sync() }
+                Button("Re-sync Shared Settings") { model.sync() }
+                Button("Check for Updates Now") { Task { await model.checkForUpdates(force: true, announce: true) } }
+                Button("Show Welcome…") { model.showWelcome() }
             }
 
             Section {

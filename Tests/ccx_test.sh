@@ -39,8 +39,8 @@ usage_file() {  # usage_file <acct> <5h> <7d>
 }
 
 setup
-check "version" "ccx 1.1.1" "$("$CCX" version)"
-check "help" "ccx use a|b|auto" "$("$CCX" help)"
+check "version" "ccx 1.2.0" "$("$CCX" version)"
+check "help" "ccx use <acct>|auto" "$("$CCX" help)"
 check "a runs default config" "RUN dir=default" "$("$CCX" a -c 2>&1)"
 check "a passes args" "args=-c --model x" "$("$CCX" a -c --model x 2>&1)"
 check "b not signed in → login first" "LOGIN $HOME/.claude-b" "$("$CCX" b 2>&1 <<<'' )"
@@ -87,15 +87,15 @@ check "run never prompts login for signed-out account" "RUN dir=$HOME/.claude-b"
 check "run printed no sign-in nag" "" "$("$CCX" run --version 2>&1 | grep -c 'signing in' | sed 's/^0$//')"
 check "api-key users never get a login prompt" "RUN dir=$HOME/.claude-b" "$(ANTHROPIC_API_KEY=x "$CCX" b 2>&1 | grep -v '^$')"
 "$CCX" use auto >/dev/null
-check "bad account" "account must be 'a' or 'b'" "$("$CCX" login c 2>&1)"
-check "bad use" "usage: ccx use a|b|auto" "$("$CCX" use x 2>&1)"
+check "bad account" "account must be a, b, c or d" "$("$CCX" login z 2>&1)"
+check "bad use" "usage: ccx use a|b|c|d|auto" "$("$CCX" use x 2>&1)"
 teardown
 
 # shared dirs are created in A so B links them from the first launch
-setup; rm -rf "$HOME/.claude/projects"
+setup; rm -rf "$HOME/.claude/projects"; mkdir -p "$HOME/.claude-b"
 "$CCX" sync >/dev/null
 check "missing shared dir created in A" "$HOME/.claude/projects" "$(readlink "$HOME/.claude-b/projects")"
-check "sync is quiet the 2nd time" "account B synced" "$("$CCX" sync 2>&1)"
+check "sync is quiet the 2nd time" "accounts synced" "$("$CCX" sync 2>&1)"
 check "no skip warnings on 2nd sync" "0" "$("$CCX" sync 2>&1 | grep -c skip)"
 before=$(stat -f %m "$HOME/.claude-b/.claude.json"); sleep 1; "$CCX" sync >/dev/null
 check "unchanged json is not rewritten" "$before" "$(stat -f %m "$HOME/.claude-b/.claude.json")"
@@ -107,6 +107,33 @@ teardown
 setup; mkdir -p "$HOME/.claude-accounts/usage"
 echo '{"five_hour":{"used_percentage":10,"resets_at":9999999999.5},"seven_day":{"used_percentage":5,"resets_at":9999999999.5}}' > "$HOME/.claude-accounts/usage/a.json"
 check "float resets_at is fine" "" "$("$CCX" status 2>&1 >/dev/null)"
+teardown
+
+# accounts C and D
+setup
+"$CCX" b </dev/null >/dev/null 2>&1          # B signs in (stub writes b@example.com)
+check "use c before it exists is refused" "isn't set up yet" "$("$CCX" use c 2>&1)"
+check "login c creates its folder" "LOGIN $HOME/.claude-c" "$("$CCX" login c 2>&1)"
+check "c links shared skills" "$HOME/.claude/skills" "$(readlink "$HOME/.claude-c/skills")"
+check "c json gets mcpServers" '"y"' "$(jq -c .mcpServers "$HOME/.claude-c/.claude.json")"
+check "c runs in its own dir" "RUN dir=$HOME/.claude-c" "$("$CCX" c 2>&1)"
+check "status lists c" "C  b@example.com" "$("$CCX" status)"
+usage_file a 95 10; usage_file b 92 10; usage_file c 40 20
+check "auto picks c when a, b full" "c" "$("$CCX" which)"
+mkdir -p "$HOME/.claude-d"; echo '{"oauthAccount":{"emailAddress":"d@example.com"}}' > "$HOME/.claude-d/.claude.json"; usage_file d 10 90
+check "auto skips full d (weekly), keeps c" "c" "$("$CCX" which)"
+usage_file d 10 30
+check "auto picks d (lowest 5h)" "d" "$("$CCX" which)"
+"$CCX" use c >/dev/null
+check "pin c" "RUN dir=$HOME/.claude-c" "$("$CCX" run 2>&1)"
+check "remove c" "account C removed" "$("$CCX" remove c 2>&1)"
+check "c folder gone" "gone" "$([ -d "$HOME/.claude-c" ] && echo still || echo gone)"
+check "c folder is in the Trash" ".claude-c-" "$(ls -A "$HOME/.Trash")"
+check "pin cleared with c" "auto (most headroom)" "$("$CCX" status)"
+check "a can't be removed" "can't be removed" "$("$CCX" remove a 2>&1)"
+check "remove unknown" "isn't set up" "$("$CCX" remove c 2>&1)"
+check "sync covers b and d" "accounts synced" "$("$CCX" sync 2>&1)"
+check "d got linked" "$HOME/.claude/skills" "$(readlink "$HOME/.claude-d/skills")"
 teardown
 
 # missing claude

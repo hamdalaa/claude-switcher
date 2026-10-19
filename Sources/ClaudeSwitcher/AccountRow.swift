@@ -5,6 +5,7 @@ import SwiftUI
 /// The active row expands to show its meters; the other keeps a one-line summary.
 struct AccountRow: View {
     let state: AccountState
+    let name: String?
     let isActive: Bool
     /// The ✓ was chosen by Auto rather than by the user.
     let isAutoPick: Bool
@@ -18,6 +19,9 @@ struct AccountRow: View {
     let onChoosePicture: () -> Void
     let onDropPicture: (URL) -> Void
     let onRemovePicture: () -> Void
+    let onRename: () -> Void
+    /// nil for account A, which can't be removed.
+    let onRemove: (() -> Void)?
 
     var body: some View {
         MenuRow(action: state.isSignedIn ? onSelect : onSignIn) {
@@ -30,8 +34,7 @@ struct AccountRow: View {
                        tint: state.isSignedIn ? Theme.tint(state.account) : Theme.neutralAvatar,
                        letter: state.account.label)
                 VStack(alignment: .leading, spacing: Theme.textGap) {
-                    Text(state.email ?? "Account \(state.account.label)")
-                        .font(Theme.body)
+                    title
                         .lineLimit(1)
                         .truncationMode(.middle)
                     summary
@@ -60,13 +63,25 @@ struct AccountRow: View {
                 Button("Sign In…", action: onSignIn)
             }
             Divider()
+            Button("Rename…", action: onRename)
             Button("Change Picture…", action: onChoosePicture)
             if avatar != nil { Button("Remove Picture", action: onRemovePicture) }
+            if let onRemove {
+                Divider()
+                Button("Remove Account \(state.account.label)…", action: onRemove)
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isActive ? [.isSelected, .isButton] : .isButton)
         .accessibilityHint(state.isSignedIn ? "New sessions start on this account" : "Signs in this account")
         .help(state.isSignedIn ? "Start new sessions on this account" : "Sign in this account")
+    }
+
+    /// The name if set (email after it, quieter); else the email.
+    private var title: Text {
+        let email = state.email ?? "Account \(state.account.label)"
+        guard let name else { return Text(email).font(Theme.body) }
+        return Text(name).font(Theme.body) + Text("  \(email)").font(Theme.detail).foregroundColor(.secondary)
     }
 
     /// "Max 20x · 5h 51% · week 86%": numbers turn orange/red only when they matter.

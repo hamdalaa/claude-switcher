@@ -12,6 +12,11 @@ final class SwitcherModel {
     private(set) var isRefreshing = false
     private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
     private(set) var recentProjects: [String] = []
+    private(set) var recentSessions: [RecentSession] = []
+    /// Optional names ("Work", "Personal") shown instead of the email.
+    private(set) var names: [Account: String] = [:]
+    private(set) var update: ReleaseCheck.Latest?
+    private(set) var installedWithHomebrew = false
     private(set) var plans: [Account: String] = [:]
     private(set) var avatars: [String: NSImage] = [:]
     private(set) var codex: CodexUsage?
@@ -28,6 +33,9 @@ final class SwitcherModel {
     private(set) var hookBannerDismissed: Bool
     var notificationsEnabled: Bool {
         didSet { UserDefaults.standard.set(notificationsEnabled, forKey: Keys.notifications) }
+    }
+    var checksForUpdates: Bool {
+        didSet { UserDefaults.standard.set(checksForUpdates, forKey: Keys.updates) }
     }
 
     /// Screenshot mode: fixed sample data, no reads or writes.
@@ -50,6 +58,14 @@ final class SwitcherModel {
         static let notifications = "notificationsEnabled"
         static let terminal = "terminal"
         static let hookBannerDismissed = "hookBannerDismissed"
+        static let updates = "checksForUpdates"
+        static let welcomeShown = "welcomeShown"
+        static func name(_ account: Account) -> String { "accountName.\(account.rawValue)" }
+    }
+
+    var canAddAccount: Bool { !isDemo && store.nextFreeAccount() != nil }
+    func displayName(_ account: Account) -> String {
+        names[account] ?? snapshot.state(account).email ?? "Account \(account.label)"
     }
 
     /// The chosen terminal if it's still installed, else the automatic pick.
@@ -59,13 +75,17 @@ final class SwitcherModel {
     }
     var shellSupportsHook: Bool { Setup.hookFile != nil }
     var showsHookBanner: Bool {
-        !isDemo && !hookInstalled && !hookBannerDismissed && shellSupportsHook && snapshot.state(.b).isSignedIn
+        !isDemo && !hookInstalled && !hookBannerDismissed && shellSupportsHook && snapshot.states.contains { $0.account != .a && $0.isSignedIn }
     }
 
     init(demo: Bool = false) {
         isDemo = demo
         let defaults = UserDefaults.standard
         notificationsEnabled = defaults.object(forKey: Keys.notifications) as? Bool ?? true
+        checksForUpdates = defaults.object(forKey: Keys.updates) as? Bool ?? true
+        names = Dictionary(uniqueKeysWithValues: Account.allCases.compactMap { account in
+            defaults.string(forKey: Keys.name(account)).flatMap { $0.isEmpty ? nil : (account, $0) }
+        })
         hookBannerDismissed = defaults.bool(forKey: Keys.hookBannerDismissed)
         terminalChoice = defaults.string(forKey: Keys.terminal).flatMap(TerminalApp.init(rawValue:))
         if demo {
@@ -75,6 +95,8 @@ final class SwitcherModel {
             codexAvailable = true
             installedTerminals = [.terminal]
             recentProjects = ["~/code/web-app", "~/code/api"]
+            names = DemoData.names
+            recentSessions = DemoData.sessions
             return
         }
         snapshot = store.snapshot()
@@ -88,12 +110,22 @@ final class SwitcherModel {
         }
         Launcher.removeStaleScripts()
         if notificationsEnabled { notifier.requestPermission() }
+        // Existing users (another account already set up) skip the welcome on upgrade.
+        if store.configuredAccounts().count > 1 { defaults.set(true, forKey: Keys.welcomeShown) }
+        if !defaults.bool(forKey: Keys.welcomeShown) {
+            defaults.set(true, forKey: Keys.welcomeShown)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(600))
+                if let self { WelcomeWindow.show(model: self) }
+            }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
         poller = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshLive()
+                await self?.checkForUpdates()
                 try? await Task.sleep(for: Self.pollInterval)
             }
         }
@@ -114,6 +146,11 @@ final class SwitcherModel {
     func panelOpened() {
         guard !isDemo else { return }
         recentProjects = RecentProjects.load(history: history)
+        let projects = store.paths.home.appending(path: ".claude/projects")
+        Task.detached(priority: .utility) {
+            let sessions = RecentSessions.load(projects: projects)
+            await MainActor.run { [weak self] in self?.recentSessions = sessions }
+        }
         installedTerminals = System.installedTerminals()
         refreshSetup()
         refresh()
@@ -137,8 +174,11 @@ final class SwitcherModel {
 
     private func readAll() async {
         async let codexRead: Void = readCodex()
+        let configured = Set(store.configuredAccounts())
         for account in Account.allCases {
-            guard let email = store.email(account) else { forget(account); continue }
+            // Re-check per account: one may have been removed while this read was in flight.
+            guard configured.contains(account), store.configuredAccounts().contains(account),
+                  let email = store.email(account) else { forget(account); continue }
             if liveEmail[account] != email { forget(account); liveEmail[account] = email }
             plans[account] = await reader.plan(account)
             switch await reader.read(account) {
@@ -173,7 +213,7 @@ final class SwitcherModel {
     }
 
     /// Signed out, or a different login in this slot: drop everything held for the old one.
-    private func forget(_ account: Account) {
+    func forget(_ account: Account) {
         live[account] = nil
         liveErrors[account] = nil
         plans[account] = nil
@@ -216,6 +256,133 @@ final class SwitcherModel {
         perform { try Launcher.signIn(account, terminal: terminal) }
     }
 
+    /// Resumes a conversation on `account` — e.g. carry on with B after A hit its limit.
+    func continueSession(_ session: RecentSession, on account: Account) {
+        perform { try Launcher.session(account, in: session.directory, terminal: terminal, arguments: ["--resume", session.id]) }
+    }
+
+    func addAccount() {
+        // An earlier sign-in that was never finished leaves a signed-out row; finish that first.
+        let unfinished = snapshot.states.first { $0.account != .a && !$0.isSignedIn }?.account
+        guard let account = unfinished ?? store.nextFreeAccount() else { return }
+        signIn(account)
+        message = "Finish signing in account \(account.label) in the browser — it appears here when done"
+    }
+
+    func removeAccount(_ account: Account) {
+        guard !isDemo, account != .a else { return }
+        let alert = NSAlert()
+        alert.messageText = "Remove account \(account.label)?"
+        alert.informativeText = "Signs \(displayName(account)) out and moves ~/.claude-\(account.rawValue) to the Trash. Settings, skills and conversations shared from account A aren't affected."
+        alert.addButton(withTitle: "Remove Account \(account.label)")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task {
+            if let inFlight { await inFlight.value }   // don't let a running refresh recreate it
+            do {
+                try await Launcher.removeAccount(account)
+                forget(account)
+                setName(nil, for: account)
+                try? avatarStore.remove(account.rawValue)
+                avatars = Self.loadAvatars(avatarStore)
+                message = "Account \(account.label) removed"
+            } catch {
+                message = "Couldn't remove account \(account.label): \(error.localizedDescription)"
+            }
+            refresh()
+        }
+    }
+
+    func rename(_ account: Account) {
+        guard !isDemo else { return }
+        let alert = NSAlert()
+        alert.messageText = "Name account \(account.label)"
+        alert.informativeText = "Shown instead of the email, e.g. Work or Personal. Leave empty to show the email."
+        let field = NSTextField(string: names[account] ?? "")
+        field.placeholderString = snapshot.state(account).email ?? "Account \(account.label)"
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        setName(field.stringValue, for: account)
+    }
+
+    private func setName(_ name: String?, for account: Account) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        names[account] = trimmed.isEmpty ? nil : String(trimmed.prefix(40))
+        UserDefaults.standard.set(names[account], forKey: Keys.name(account))
+    }
+
+    // MARK: Updates
+
+    private static let releasesAPI = URL(string: "https://api.github.com/repos/hamdalaa/claude-switcher/releases/latest")!
+    private static let lastUpdateCheckKey = "lastUpdateCheck"
+    private static let updateInterval: TimeInterval = 86_400
+    private static let latestVersionKey = "latestReleaseVersion"
+    private static let latestURLKey = "latestReleaseURL"
+
+    /// At most once a day (or when asked): one request to GitHub's public releases API.
+    /// `announce` reports the result even when there's nothing new (for "Check Now").
+    func checkForUpdates(force: Bool = false, announce: Bool = false) async {
+        guard !isDemo, checksForUpdates || force else { return }
+        let defaults = UserDefaults.standard
+        let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        if !force, let last = defaults.object(forKey: Self.lastUpdateCheckKey) as? Date,
+           Date.now.timeIntervalSince(last) < Self.updateInterval {
+            // Checked recently: reuse what we found then, without another request.
+            if update == nil, let version = defaults.string(forKey: Self.latestVersionKey),
+               let url = defaults.string(forKey: Self.latestURLKey).flatMap(URL.init(string:)),
+               ReleaseCheck.isNewer(version, than: current) {
+                update = ReleaseCheck.Latest(version: version, url: url)
+                installedWithHomebrew = await Self.isHomebrewInstall()
+            }
+            return
+        }
+        defaults.set(Date.now, forKey: Self.lastUpdateCheckKey)
+        var request = URLRequest(url: Self.releasesAPI)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("ClaudeSwitcher", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let latest = ReleaseCheck.parse(data) else {
+            if announce { message = "Couldn't check for updates right now" }
+            return
+        }
+        defaults.set(latest.version, forKey: Self.latestVersionKey)
+        defaults.set(latest.url.absoluteString, forKey: Self.latestURLKey)
+        update = ReleaseCheck.isNewer(latest.version, than: current) ? latest : nil
+        installedWithHomebrew = await Self.isHomebrewInstall()
+        if announce && update == nil { message = "Claude Switcher is up to date (\(current))" }
+    }
+
+    func installUpdate() {
+        guard let update else { return }
+        if installedWithHomebrew {
+            perform { try Launcher.brewUpgrade(terminal: terminal) }
+        } else {
+            NSWorkspace.shared.open(update.url)
+        }
+    }
+
+    func setChecksForUpdates(_ enabled: Bool) {
+        checksForUpdates = enabled
+        if enabled { Task { await checkForUpdates(force: true) } } else { update = nil }   // quiet
+    }
+
+    private static func isHomebrewInstall() async -> Bool {
+        guard let brew = await System.which("brew") else { return false }
+        let prefix = URL(filePath: brew).deletingLastPathComponent().deletingLastPathComponent()
+        return FileManager.default.fileExists(atPath: prefix.appending(path: "Caskroom/claude-switcher").path)
+    }
+
+    func showWelcome() { WelcomeWindow.show(model: self) }
+
     func openWeb(_ account: Account) {
         perform { try Launcher.web(account) }
     }
@@ -238,7 +405,7 @@ final class SwitcherModel {
         Task {
             do {
                 try await Launcher.sync()
-                message = "Account B re-synced with A's settings"
+                message = "Shared settings re-synced into every account"
             } catch {
                 message = "Sync failed: \(error.localizedDescription)"
             }
@@ -250,7 +417,8 @@ final class SwitcherModel {
     // MARK: Avatars
 
     private static func loadAvatars(_ store: AvatarStore) -> [String: NSImage] {
-        Dictionary(uniqueKeysWithValues: ["a", "b", "codex"].compactMap { key in store.load(key).map { (key, $0) } })
+        let keys = Account.allCases.map(\.rawValue) + ["codex"]
+        return Dictionary(uniqueKeysWithValues: keys.compactMap { key in store.load(key).map { (key, $0) } })
     }
 
     func chooseAvatar(_ key: String) {
@@ -354,6 +522,11 @@ enum DemoData {
     }
 
     static let plans: [Account: String] = [.a: "Max 5x", .b: "Max 20x"]
+    static let names: [Account: String] = [.a: "Work", .b: "Personal"]
+    static let sessions = [
+        RecentSession(id: "demo-1", directory: "/Users/demo/code/web-app", title: "Fix the flaky login test", modified: .now),
+        RecentSession(id: "demo-2", directory: "/Users/demo/code/api", title: "Add rate limiting to /v1/search", modified: .now),
+    ]
     static let codex = CodexUsage(
         email: "dev@example.com", plan: "Plus",
         windows: [.init(title: "Weekly", window: UsageWindow(percent: 27, resetsAt: .now.addingTimeInterval(5 * 86400)))],

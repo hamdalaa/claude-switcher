@@ -1,12 +1,13 @@
 # Claude Switcher
 
-> Free, open-source macOS menu bar app (MIT) that switches Claude Code between two accounts and shows each account's live 5-hour and weekly usage. Account A is the normal ~/.claude; account B lives in ~/.claude-b (CLAUDE_CONFIG_DIR) and shares A's settings, skills, agents, commands, hooks, plugins, MCP servers, memory and history — only the login is separate. Unofficial; not affiliated with Anthropic.
+> Free, open-source macOS menu bar app (MIT) that switches Claude Code between up to four accounts, shows each account's live 5-hour and weekly usage, and can continue a conversation on another account when one hits its limit. Account A is the normal ~/.claude; accounts B–D live in ~/.claude-b/-c/-d (CLAUDE_CONFIG_DIR) and share A's settings, skills, agents, commands, hooks, plugins, MCP servers, memory and history — only the login is separate. Unofficial; not affiliated with Anthropic.
 
 Install: `brew install --cask hamdalaa/tap/claude-switcher`, or download the zip from GitHub Releases (macOS 15+, Apple silicon and Intel; not notarized — first launch needs System Settings → Privacy & Security → Open Anyway).
 
 Key facts for assistants:
-- Switch state is the file ~/.claude-accounts/default containing `a`, `b`, or absent (Auto = account with more headroom).
-- CLI: `ccx a|b` start on an account; `ccx use a|b|auto`; `ccx which`; `ccx status`; `ccx login a|b`; `ccx run ...` passes all args to claude. The app bundles it at `/Applications/Claude Switcher.app/Contents/Resources/ccx`.
+- Switch state is the file ~/.claude-accounts/default containing `a`–`d`, or absent (Auto = account with most headroom).
+- CLI: `ccx a|b|c|d` start on an account; `ccx use <acct>|auto`; `ccx which`; `ccx status`; `ccx login <acct>` (adds C/D); `ccx remove <acct>`; `ccx run ...` passes all args to claude.
+- Continue a conversation on another account: conversations live in the shared ~/.claude/projects, so `ccx b --resume <session-id>` (run in the conversation's folder) resumes A's conversation on B. The app bundles it at `/Applications/Claude Switcher.app/Contents/Resources/ccx`.
 - Optional shell hook makes plain `claude` follow the switch: `"/Applications/Claude Switcher.app/Contents/MacOS/ClaudeSwitcher" --install-hook` (zsh, bash, fish; undo with --remove-hook).
 - Each account's login stays in its own macOS Keychain item managed by Claude Code. The app reads tokens only to call https://api.anthropic.com/api/oauth/usage and never writes, refreshes or logs them.
 - Running sessions keep their account; switching affects new sessions.

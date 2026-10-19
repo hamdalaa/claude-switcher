@@ -14,6 +14,9 @@ Please don't open a public issue for security problems.
 |---|---|---|
 | Login Keychain items `Claude Code-credentials*` | read via `/usr/bin/security find-generic-password -w` | access token for the usage request |
 | `https://api.anthropic.com/api/oauth/usage` | HTTPS GET, ephemeral session, no cookies/cache | live usage |
+| `https://api.github.com/repos/hamdalaa/claude-switcher/releases/latest` | HTTPS GET, at most daily, no credentials; off via Settings | update check |
+| `~/.claude/projects/*/*.jsonl` | reads the first 256 KB of recent transcripts | "Continue a Conversation" menu (folder + first prompt) |
+| `ccx remove <b\|c\|d>` | signs the account out and deletes only `~/.claude-<b\|c\|d>` (path is validated) | "Remove Account…" |
 | `claude auth status` | run when a token has expired | lets Claude Code renew its own login |
 | `codex app-server` | local stdio JSON-RPC, read-only methods | Codex usage |
 | `~/.claude-accounts/`, `~/.claude-b/` | read/write | switch state, usage cache, account B config |

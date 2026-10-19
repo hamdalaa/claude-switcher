@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Status line for the two-account setup.
-# Shows which account this session runs on, plus the last-known 5h/7d usage of BOTH accounts.
-# Each session records its own account's rate_limits to ~/.claude-accounts/usage/<a|b>.json,
+# Status line for Claude Switcher (accounts A–D).
+# Shows which account this session runs on, plus the last-known 5h/7d usage of every account.
+# Each session records its own account's rate_limits to ~/.claude-accounts/usage/<a-d>.json,
 # so the other account's numbers are as fresh as the last time you used it.
 
 input=$(cat)
 STATE_DIR="$HOME/.claude-accounts/usage"
 mkdir -p "$STATE_DIR"
 
-case "${CLAUDE_CONFIG_DIR:-}" in
-  *".claude-b"|*".claude-b/") me=b ;;
+config_dir=${CLAUDE_CONFIG_DIR%/}
+case "$config_dir" in
+  *"/.claude-b") me=b ;;
+  *"/.claude-c") me=c ;;
+  *"/.claude-d") me=d ;;
   *) me=a ;;
 esac
 
@@ -55,4 +58,8 @@ model=$(jq -r '.model.display_name // "Claude"' <<<"$input")
 dir=$(jq -r '.workspace.current_dir // .cwd // ""' <<<"$input")
 dir=${dir/#$HOME/\~}
 
-printf '%s%s%s %s  │  %s  │  %s' "$DIM" "[$model]" "$RST" "$dir" "$(segment a)" "$(segment b)"
+line="${DIM}[$model]${RST} $dir"
+for acct in a b c d; do
+  if [ "$acct" = a ] || [ -d "$HOME/.claude-$acct" ]; then line+="  │  $(segment "$acct")"; fi
+done
+printf '%s' "$line"

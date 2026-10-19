@@ -17,8 +17,9 @@
 </p>
 
 Hit your Claude limit in the middle of a task? If you have a second Claude subscription (say, work
-and personal), Claude Switcher puts both in your menu bar. You see how much each has left and
-switch with one click, and your settings, skills, agents and memory come along.
+and personal), Claude Switcher puts both in your menu bar. You see how much each has left, switch
+with one click, and **continue the same conversation on the other account**. Your settings, skills,
+agents and memory come along. Up to four accounts.
 
 > **Unofficial.** A community project, not made by or affiliated with Anthropic or OpenAI.
 
@@ -63,18 +64,23 @@ Rules: never read, print or copy tokens or Keychain items; never edit my shell f
 ## What you get
 
 - **One-click switching.** Click an account and new sessions start on it. Or turn on **Auto**, which
-  picks whichever account has more room left. Sessions that are already running keep their account.
+  picks whichever has more room left. Sessions that are already running keep their account.
+- **Continue on another account.** When one account hits its limit, switch and choose **Continue a
+  Conversation**. The same conversation resumes on the other account, with full history.
 - **Live usage.** 5-hour and weekly limits for both accounts straight from Anthropic, with time to
   reset. Numbers turn orange at 70% and red at 90%, and you get an alert when an account fills up or
   frees up again.
-- **One setup, two logins.** Account B shares account A's settings, `CLAUDE.md`, skills, agents,
-  commands, hooks, plugins, MCP servers, memory and history. Only the login is separate.
+- **One setup, separate logins.** Accounts B–D share account A's settings, `CLAUDE.md`, skills,
+  agents, commands, hooks, plugins, MCP servers, memory and history. Only the login is separate. Name
+  them ("Work", "Personal") and add up to four.
 - **claude.ai per account.** Each account gets its own browser window, so both stay signed in
   without touching your everyday browser profile.
 - **Plain `claude` follows the switch** (optional shell hook for zsh, bash and fish), plus the
   `ccx` command for scripts.
 - **Codex usage** too, if you use the Codex CLI.
 - Your terminal of choice: Terminal, iTerm2, Ghostty, kitty or WezTerm.
+- **Stays up to date.** It checks GitHub for new versions once a day and updates in one click
+  (through Homebrew if you installed it that way).
 
 <p align="center">
   <img src="docs/screenshot-light.png" width="300" alt="Light mode">
@@ -88,6 +94,9 @@ Rules: never read, print or copy tokens or Keychain items; never edit my shell f
 | Switch accounts | Click the account. ✓ marks where new sessions start |
 | Let it choose | Turn on **Auto** (picks the account with more room left) |
 | Start Claude Code | **New Claude Code Session**, or **Open in Recent Folder** |
+| Keep going after a limit | Switch accounts, then **Continue a Conversation** |
+| Add another account | **Add Account…** (up to four) |
+| Name or remove an account | Right-click its row → **Rename…** / **Remove Account…** |
 | Use claude.ai | **Open claude.ai**: a separate window per account |
 | Act on the other account | Right-click its row |
 | Change a picture | Right-click a row → **Change Picture…**, or drop an image on it |
@@ -96,21 +105,22 @@ Rules: never read, print or copy tokens or Keychain items; never edit my shell f
 ### The `ccx` command
 
 ```text
-ccx              start on the switched-to account
-ccx a|b [...]    start on a specific account (extra args go to claude)
-ccx run [...]    like ccx, but passes ALL args to claude
-ccx use a|b|auto set the switch
-ccx which        print which account the next session uses
-ccx login a|b    sign an account in
-ccx logout a|b   sign an account out
-ccx status       accounts, usage, current switch
-ccx sync         re-link shared config into account B
+ccx                  start on the switched-to account
+ccx a|b|c|d [...]    start on a specific account (extra args go to claude)
+ccx run [...]        like ccx, but passes ALL args to claude
+ccx use <acct>|auto  set the switch
+ccx which            print which account the next session uses
+ccx login <acct>     sign an account in (signing in C or D adds it)
+ccx logout <acct>    sign an account out
+ccx remove <acct>    sign out and remove account B, C or D
+ccx status           accounts, usage, current switch
+ccx sync             re-link shared config into the other accounts
 ```
 
 ## How it works
 
 - **Separate logins, shared everything else.** Claude Code reads its config from
-  `CLAUDE_CONFIG_DIR`. Account B runs with `CLAUDE_CONFIG_DIR=~/.claude-b`, where `ccx` keeps
+  `CLAUDE_CONFIG_DIR`. Account B runs with `CLAUDE_CONFIG_DIR=~/.claude-b` (C and D likewise), where `ccx` keeps
   symlinks to A's `settings.json`, `CLAUDE.md`, `skills/`, `agents/`, `commands/`, `hooks/`,
   `plugins/`, `projects/` and `history.jsonl`. A few account-independent keys from `~/.claude.json`
   (such as `mcpServers`) are copied over. The login is never copied.
@@ -123,8 +133,9 @@ ccx sync         re-link shared config into account B
 
 ## Privacy & security
 
-- **No telemetry, no servers of ours.** The only network request is
-  `GET https://api.anthropic.com/api/oauth/usage` for each signed-in account.
+- **No telemetry, no servers of ours.** Network requests: `GET https://api.anthropic.com/api/oauth/usage`
+  for each signed-in account, and once a day `GET https://api.github.com/repos/hamdalaa/claude-switcher/releases/latest`
+  to check for updates (Settings → Check for Updates Daily turns it off).
 - **Tokens are read, never written.** The app reads each account's access token from the Keychain
   (via `/usr/bin/security`) only to ask for usage. It never stores, logs, refreshes or modifies a
   token. Expired tokens are renewed by Claude Code itself (`claude auth status`).
@@ -147,6 +158,10 @@ login (Pro / Max).
 
 **Why not just log out and back in?** That throws away your session state, and you can't run both
 accounts side by side. Here both stay signed in, and sessions on A and B can run at the same time.
+
+**Can I keep a conversation going after hitting the limit?** Yes. Switch to the other account, then
+choose **Continue a Conversation** and pick it. Conversations are shared between accounts, so the
+other account resumes it with full history (`claude --resume`).
 
 **Plain `claude` still uses A.** Turn on **Plain `claude` follows the switch** in Settings, then open
 a new terminal tab. Check with `ccx which`.

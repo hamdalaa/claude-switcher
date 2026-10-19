@@ -9,8 +9,22 @@ enum Launcher {
                                            "org.chromium.Chromium", "com.vivaldi.Vivaldi"]
     static let webURL = "https://claude.ai/new"
 
-    static func session(_ account: Account, in directory: String, terminal: TerminalApp) throws {
-        try openTerminal(running: [try ccx(), account.rawValue], in: directory, terminal: terminal)
+    /// `arguments` go to claude, e.g. ["--resume", sessionID] to continue a conversation.
+    static func session(_ account: Account, in directory: String, terminal: TerminalApp, arguments: [String] = []) throws {
+        try openTerminal(running: [try ccx(), account.rawValue] + arguments, in: directory, terminal: terminal)
+    }
+
+    /// `brew upgrade --cask claude-switcher` in a terminal.
+    static func brewUpgrade(terminal: TerminalApp) throws {
+        try openTerminal(running: ["brew", "upgrade", "--cask", "claude-switcher"], in: System.home.path, terminal: terminal)
+    }
+
+    /// Signs out and removes account B–D via the bundled `ccx remove`.
+    static func removeAccount(_ account: Account) async throws {
+        guard let ccx = System.bundledCCX else { throw Installer.Failure.noBundledCLI }
+        let result = await System.run("/bin/bash", [ccx.path, "remove", account.rawValue],
+                                      environment: await System.toolEnvironment())
+        guard result.status == 0 else { throw LaunchError.failed(result.output.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
 
     static func signIn(_ account: Account, terminal: TerminalApp) throws {

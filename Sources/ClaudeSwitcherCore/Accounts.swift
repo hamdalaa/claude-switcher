@@ -1,10 +1,13 @@
 import Foundation
 
-/// The two Claude Code accounts managed by `ccx`. A lives in ~/.claude, B in ~/.claude-b.
-public enum Account: String, CaseIterable, Sendable, Identifiable {
-    case a, b
+/// Up to four Claude Code accounts managed by `ccx`. A is Claude Code's normal ~/.claude; the
+/// others live in ~/.claude-<letter> and exist once that folder does (i.e. after signing in).
+public enum Account: String, CaseIterable, Sendable, Identifiable, Comparable {
+    case a, b, c, d
     public var id: String { rawValue }
     public var label: String { rawValue.uppercased() }
+
+    public static func < (lhs: Account, rhs: Account) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
 /// Which account a new `ccx` session starts on. Mirrors ~/.claude-accounts/default.
@@ -96,11 +99,14 @@ public struct Paths: Sendable {
         self.home = home
     }
 
+    /// ~/.claude for A; ~/.claude-<letter> for the others (their CLAUDE_CONFIG_DIR).
+    public func configDir(_ account: Account) -> URL {
+        account == .a ? home.appending(path: ".claude") : home.appending(path: ".claude-\(account.rawValue)")
+    }
+
+    /// Claude Code keeps A's settings file in the home folder, the others' inside their config dir.
     public func configJSON(_ account: Account) -> URL {
-        switch account {
-        case .a: home.appending(path: ".claude.json")
-        case .b: home.appending(path: ".claude-b/.claude.json")
-        }
+        account == .a ? home.appending(path: ".claude.json") : configDir(account).appending(path: ".claude.json")
     }
 
     public var stateRoot: URL { home.appending(path: ".claude-accounts") }
@@ -117,6 +123,17 @@ public struct AccountStore: Sendable {
 
     public init(paths: Paths = Paths()) {
         self.paths = paths
+    }
+
+    /// A always; B–D once their config folder exists.
+    public func configuredAccounts() -> [Account] {
+        Account.allCases.filter { $0 == .a || FileManager.default.fileExists(atPath: paths.configDir($0).path) }
+    }
+
+    /// The next letter to add, if fewer than four accounts are set up.
+    public func nextFreeAccount() -> Account? {
+        let configured = Set(configuredAccounts())
+        return Account.allCases.first { !configured.contains($0) }
     }
 
     public func email(_ account: Account) -> String? {
@@ -172,31 +189,40 @@ public struct AccountStore: Sendable {
 
     /// `live` usage, when present, replaces the last-known file value for that account.
     public func snapshot(now: Date = .now, live: [Account: Usage] = [:]) -> Snapshot {
-        let states = Account.allCases.map {
+        let states = configuredAccounts().map {
             AccountState(account: $0, email: email($0), usage: live[$0] ?? usage($0, now: now))
         }
         let mode = mode()
         let next = Self.pick(
             mode: mode,
-            a: states[0].usage,
-            b: states[1].usage,
-            bSignedIn: states[1].isSignedIn
+            usage: Dictionary(uniqueKeysWithValues: states.compactMap { s in s.usage.map { (s.account, $0) } }),
+            signedIn: Set(states.filter(\.isSignedIn).map(\.account)),
+            configured: Set(states.map(\.account))
         )
         return Snapshot(states: states, mode: mode, next: next)
     }
 
-    /// Same rule as `ccx pick`: pin wins; else the account with more headroom.
-    public static func pick(mode: Mode, a: Usage?, b: Usage?, bSignedIn: Bool) -> Account {
-        if case .pinned(let account) = mode { return account }
-        guard bSignedIn else { return .a }
-        let (a5, a7) = (a?.fiveHour?.percent ?? 0, a?.sevenDay?.percent ?? 0)
-        let (b5, b7) = (b?.fiveHour?.percent ?? 0, b?.sevenDay?.percent ?? 0)
-        let aFull = a5 >= limitPercent || a7 >= limitPercent
-        let bFull = b5 >= limitPercent || b7 >= limitPercent
-        if aFull && !bFull { return .b }
-        if bFull && !aFull { return .a }
-        if a5 != b5 { return a5 < b5 ? .a : .b }
-        return a7 <= b7 ? .a : .b
+    /// Same rule as `ccx pick`: a pin wins (if that account is set up); otherwise, among signed-in
+    /// accounts, prefer ones that aren't full, then the lowest 5-hour use, then the lowest weekly
+    /// use, then the earliest letter. Falls back to A.
+    public static func pick(mode: Mode, usage: [Account: Usage], signedIn: Set<Account>,
+                            configured: Set<Account> = Set(Account.allCases)) -> Account {
+        if case .pinned(let account) = mode, configured.contains(account) || account == .a { return account }
+        let candidates = signedIn.intersection(configured.union([.a])).sorted()
+        guard !candidates.isEmpty else { return .a }
+        func load(_ account: Account) -> (five: Int, seven: Int, full: Bool) {
+            let five = usage[account]?.fiveHour?.percent ?? 0
+            let seven = usage[account]?.sevenDay?.percent ?? 0
+            return (five, seven, five >= limitPercent || seven >= limitPercent)
+        }
+        let open = candidates.filter { !load($0).full }
+        let pool = open.isEmpty ? candidates : open
+        return pool.min { lhs, rhs in
+            let (l, r) = (load(lhs), load(rhs))
+            if l.five != r.five { return l.five < r.five }
+            if l.seven != r.seven { return l.seven < r.seven }
+            return lhs < rhs
+        } ?? .a
     }
 
     static func window(_ value: Any?, now: Date) -> UsageWindow? {

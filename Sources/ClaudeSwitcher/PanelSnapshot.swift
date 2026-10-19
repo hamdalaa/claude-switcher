@@ -17,7 +17,10 @@ enum PanelSnapshot {
     }
 
     @MainActor private static func render(model: SwitcherModel, to path: String, dark: Bool) {
-        let host = NSHostingView(rootView: PanelView(model: model)
+        let content: AnyView = CommandLine.arguments.contains("--welcome")
+            ? AnyView(WelcomeView(model: model) {})
+            : AnyView(PanelView(model: model))
+        let host = NSHostingView(rootView: content
             .background(.regularMaterial)
             .environment(\.colorScheme, dark ? .dark : .light))
         host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)

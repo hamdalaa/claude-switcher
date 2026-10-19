@@ -21,8 +21,8 @@ final class Notifier {
         case .full(let account, let percent):
             content.title = "Account \(account.label) is at \(percent)%"
             content.body = snapshot.next == account
-                ? "New sessions still start on \(account.label). Switch to keep going."
-                : "New sessions now start on \(snapshot.next.label)."
+                ? "New sessions still start on \(account.label). Switch accounts, then use Continue a Conversation to pick up where you left off."
+                : "New sessions now start on \(snapshot.next.label). Use Continue a Conversation to pick up where you left off."
         case .available(let account):
             content.title = "Account \(account.label) is available again"
             content.body = "Its usage limit has reset."

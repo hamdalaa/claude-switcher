@@ -16,6 +16,13 @@ enum Theme {
     static let textGap: CGFloat = 2              // title ↔ subtitle
     static let meterGap: CGFloat = 5             // between meters, and above them
     static let stackGap: CGFloat = 6             // stacked text + buttons in a prompt
+
+    // Welcome window
+    static let welcomeWidth: CGFloat = 440
+    static let welcomePadding: CGFloat = 22
+    static let welcomeSectionGap: CGFloat = 18
+    static let welcomeStepGap: CGFloat = 14
+    static let welcomeBadge: CGFloat = 22
     static let highlightRadius: CGFloat = 6
     static let separatorInsetH: CGFloat = 8
     static let separatorGap: CGFloat = 5
@@ -34,6 +41,7 @@ enum Theme {
     static let detailDigits = Font.system(size: 11).monospacedDigit()
     static let bodyDigits = Font.system(size: 13).monospacedDigit()
     static let avatarLetter = Font.system(size: 12, weight: .semibold, design: .rounded)
+    static let welcomeTitle = Font.system(size: 17, weight: .semibold)
 
     // Surfaces
     static let hover = Color.primary.opacity(0.09)
@@ -48,6 +56,8 @@ enum Theme {
         switch account {
         case .a: Color(red: 0.80, green: 0.45, blue: 0.33)   // clay
         case .b: Color(red: 0.25, green: 0.52, blue: 0.47)   // sage
+        case .c: Color(red: 0.69, green: 0.55, blue: 0.24)   // ochre
+        case .d: Color(red: 0.38, green: 0.47, blue: 0.58)   // slate
         }
     }
 
