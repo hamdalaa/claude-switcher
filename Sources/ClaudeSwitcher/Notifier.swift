@@ -1,6 +1,6 @@
 import ClaudeSwitcherCore
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Posts "account is full" / "account is back" notifications. No-ops outside an app bundle
 /// (UNUserNotificationCenter traps there), e.g. when run from `.build/debug`.
@@ -30,13 +30,15 @@ final class Notifier {
         content.sound = .default
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         // Deliver once allowed; if the user hasn't been asked yet, ask and deliver on yes.
-        Task { @MainActor in
-            switch await center.notificationSettings().authorizationStatus {
+        // (Completion handlers, not async: UNNotificationSettings isn't Sendable, and older
+        // Swift 6 compilers reject sending it across actors.)
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                try? await center.add(request)
+                center.add(request)
             case .notDetermined:
-                if (try? await center.requestAuthorization(options: [.alert, .sound])) == true {
-                    try? await center.add(request)
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    if granted { center.add(request) }
                 }
             default:
                 break
