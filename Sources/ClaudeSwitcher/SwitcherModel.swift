@@ -69,7 +69,7 @@ final class SwitcherModel {
         hookBannerDismissed = defaults.bool(forKey: Keys.hookBannerDismissed)
         terminalChoice = defaults.string(forKey: Keys.terminal).flatMap(TerminalApp.init(rawValue:))
         if demo {
-            snapshot = DemoData.snapshot
+            snapshot = DemoData.snapshot(mode: DemoData.requestedMode)
             plans = DemoData.plans
             codex = DemoData.codex
             codexAvailable = true
@@ -330,18 +330,29 @@ final class SwitcherModel {
 
 /// Fixed sample data for screenshots (`--demo`).
 enum DemoData {
-    static let snapshot: Snapshot = {
+    /// `--demo-mode auto|a|b` (default auto), for README frames.
+    static var requestedMode: Mode {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--demo-mode"), i + 1 < args.count,
+              let account = Account(rawValue: args[i + 1]) else { return .auto }
+        return .pinned(account)
+    }
+
+    static func snapshot(mode: Mode) -> Snapshot {
         let now = Date.now
         func usage(_ five: Int, _ fiveIn: Double, _ seven: Int, _ sevenIn: Double) -> Usage {
             Usage(fiveHour: UsageWindow(percent: five, resetsAt: now.addingTimeInterval(fiveIn * 60)),
                   sevenDay: UsageWindow(percent: seven, resetsAt: now.addingTimeInterval(sevenIn * 3600)),
                   updatedAt: now, isLive: true)
         }
-        return Snapshot(states: [
+        let states = [
             AccountState(account: .a, email: "work@example.com", usage: usage(92, 96, 58, 92)),
             AccountState(account: .b, email: "personal@example.com", usage: usage(21, 66, 34, 107)),
-        ], mode: .auto, next: .b)
-    }()
+        ]
+        let next: Account = if case .pinned(let account) = mode { account } else { .b }
+        return Snapshot(states: states, mode: mode, next: next)
+    }
+
     static let plans: [Account: String] = [.a: "Max 5x", .b: "Max 20x"]
     static let codex = CodexUsage(
         email: "dev@example.com", plan: "Plus",

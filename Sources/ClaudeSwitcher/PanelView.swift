@@ -1,67 +1,66 @@
 import ClaudeSwitcherCore
 import SwiftUI
 
+/// The menu bar panel, laid out like a native macOS menu (see DESIGN.md).
 struct PanelView: View {
     let model: SwitcherModel
 
+    private var active: AccountState { model.snapshot.state(model.snapshot.next) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             header
-            ModeControl(selection: ModeChoice(model.snapshot.mode),
-                        disabled: Set(Account.allCases.filter { !model.snapshot.state($0).isSignedIn }.map(ModeChoice.init))) {
-                model.setMode($0.mode)
-            }
-                .help("Which account new sessions start on (same as `ccx use`)")
-            if model.showsHookBanner { hookBanner }
-            VStack(spacing: 8) {
-                ForEach(model.snapshot.states) { state in
-                    AccountCard(
-                        state: state,
-                        isNext: model.snapshot.next == state.account,
-                        isPinned: model.snapshot.mode != .auto,
-                        plan: model.plans[state.account],
-                        liveError: model.liveErrors[state.account],
-                        recentProjects: model.recentProjects,
-                        onSelect: { model.setMode(.pinned(state.account)) },
-                        onOpen: { model.open(state.account, in: $0) },
-                        onWeb: { model.openWeb(state.account) },
-                        onSignIn: { model.signIn(state.account) },
-                        avatar: model.avatars[state.account.rawValue],
-                        onChooseAvatar: { model.chooseAvatar(state.account.rawValue) },
-                        onDropAvatar: { model.setAvatar(state.account.rawValue, from: $0) },
-                        onRemoveAvatar: { model.removeAvatar(state.account.rawValue) }
-                    )
-                }
-            }
-            if model.codexAvailable {
-                CodexCard(
-                    usage: model.codex,
-                    error: model.codexError,
-                    recentProjects: model.recentProjects,
-                    onOpen: { model.openCodex(in: $0) },
-                    onWeb: { model.openCodexWeb() },
-                    avatar: model.avatars["codex"],
-                    onChooseAvatar: { model.chooseAvatar("codex") },
-                    onDropAvatar: { model.setAvatar("codex", from: $0) },
-                    onRemoveAvatar: { model.removeAvatar("codex") }
+            ForEach(model.snapshot.states) { state in
+                AccountRow(
+                    state: state,
+                    isActive: model.snapshot.next == state.account,
+                    isAutoPick: model.snapshot.mode == .auto,
+                    plan: model.plans[state.account],
+                    staleError: staleError(state),
+                    avatar: model.avatars[state.account.rawValue],
+                    onSelect: { model.setMode(.pinned(state.account)) },
+                    onSignIn: { model.signIn(state.account) },
+                    onOpenSession: { model.open(state.account) },
+                    onOpenWeb: { model.openWeb(state.account) },
+                    onChoosePicture: { model.chooseAvatar(state.account.rawValue) },
+                    onDropPicture: { model.setAvatar(state.account.rawValue, from: $0) },
+                    onRemovePicture: { model.removeAvatar(state.account.rawValue) }
                 )
             }
-            if let message = model.message {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "info.circle")
-                    Text(message).fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Button { model.dismissMessage() } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.borderless)
-                        .help("Dismiss")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            if model.showsHookBanner {
+                MenuSeparator()
+                hookPrompt
             }
-            Divider()
-            footer
+
+            MenuSeparator()
+            actions
+
+            if model.codexAvailable {
+                MenuSeparator()
+                CodexRow(
+                    usage: model.codex,
+                    error: model.codexError,
+                    avatar: model.avatars["codex"],
+                    onOpen: { model.openCodex() },
+                    onOpenWeb: { model.openCodexWeb() },
+                    onChoosePicture: { model.chooseAvatar("codex") },
+                    onDropPicture: { model.setAvatar("codex", from: $0) },
+                    onRemovePicture: { model.removeAvatar("codex") }
+                )
+            }
+
+            if let message = model.message {
+                MenuSeparator()
+                messageRow(message)
+            }
+
+            MenuSeparator()
+            SettingsMenu(model: model)
+            MenuItem(title: "Quit Claude Switcher", trailing: "⌘Q") { NSApp.terminate(nil) }
+                .keyboardShortcut("q")
         }
-        .padding(16)
+        .padding(Theme.panelInset)
         .frame(width: Theme.panelWidth)
         .onAppear { model.panelOpened() }
         // MenuBarExtra may keep this view alive between opens; refresh each time it's shown.
@@ -71,158 +70,107 @@ struct PanelView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text("Claude")
-                .font(.title3.weight(.semibold))
-            Button {
-                Task { await model.refreshLive() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.caption.weight(.semibold))
-                    .rotationEffect(.degrees(model.isRefreshing ? 360 : 0))
-                    .animation(model.isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default,
-                               value: model.isRefreshing)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .disabled(model.isRefreshing)
-            .help("Refresh usage now")
+        HStack(spacing: Theme.rowSpacing) {
+            Text("Claude Code").font(Theme.title)
             Spacer()
-            Text("Next session → \(model.snapshot.next.label)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Theme.tint(model.snapshot.next))
-                .contentTransition(.numericText())
-                .animation(.snappy, value: model.snapshot.next)
+            Text("Auto").font(Theme.detail).foregroundStyle(.secondary)
+            Toggle("Auto", isOn: Binding(
+                get: { model.snapshot.mode == .auto },
+                set: { model.setMode($0 ? .auto : .pinned(model.snapshot.next)) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+            .help("Automatically start new sessions on the account with more room left")
         }
+        .padding(.horizontal, Theme.rowPaddingH)
+        .padding(.top, Theme.headerPaddingTop)
+        .padding(.bottom, Theme.separatorGap)
     }
 
-    /// One-time nudge: without the hook, plain `claude` ignores the switch.
-    private var hookBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "terminal.fill")
-                .foregroundStyle(Theme.tint(model.snapshot.next))
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Make plain `claude` follow the switch?")
-                    .font(.caption.weight(.semibold))
-                Text("Adds a small hook to your shell config. Undo anytime in Settings.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button("Turn On") { model.setHook(true) }
-                        .controlSize(.small)
-                        .buttonStyle(.borderedProminent)
-                        .tint(Theme.tint(model.snapshot.next))
-                    Button("Not Now") { model.dismissHookBanner() }
-                        .controlSize(.small)
-                        .buttonStyle(.borderless)
+    /// Actions apply to the ✓ account; per-account versions are in each row's context menu.
+    @ViewBuilder private var actions: some View {
+        let label = model.snapshot.next.label
+        if active.isSignedIn {
+            MenuItem(title: "New Claude Code Session") { model.open(model.snapshot.next) }
+                .help("Opens \(model.terminal.displayName) on account \(label)")
+            if !model.recentProjects.isEmpty {
+                Menu {
+                    ForEach(model.recentProjects, id: \.self) { path in
+                        Button(Self.displayPath(path)) { model.open(model.snapshot.next, in: path) }
+                    }
+                } label: {
+                    menuLabel("Open in Recent Folder")
                 }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
-    }
-
-    private var footer: some View {
-        HStack(spacing: 14) {
-            SettingsMenu(model: model)
-            Spacer()
-            Button {
-                model.sync()
-            } label: {
-                if model.isSyncing {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                }
-            }
-            .help("Re-link shared settings, skills and memory into account B")
-            .disabled(model.isSyncing)
-            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
-                .help("Quit Claude Switcher")
-        }
-        .font(.caption)
-        .buttonStyle(.borderless)
-    }
-}
-
-enum ModeChoice: String, CaseIterable, Identifiable {
-    case auto, a, b
-    var id: String { rawValue }
-
-    init(_ account: Account) {
-        self = account == .a ? .a : .b
-    }
-
-    init(_ mode: Mode) {
-        switch mode {
-        case .auto: self = .auto
-        case .pinned(.a): self = .a
-        case .pinned(.b): self = .b
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .auto: "Auto"
-        case .a: "A"
-        case .b: "B"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .auto: .primary
-        case .a: Theme.tint(.a)
-        case .b: Theme.tint(.b)
-        }
-    }
-
-    var mode: Mode {
-        switch self {
-        case .auto: .auto
-        case .a: .pinned(.a)
-        case .b: .pinned(.b)
-        }
-    }
-}
-
-/// Full-width segmented control; the selected segment takes its account colour.
-private struct ModeControl: View {
-    let selection: ModeChoice
-    /// Signed-out accounts can't be switched to.
-    let disabled: Set<ModeChoice>
-    let onSelect: (ModeChoice) -> Void
-    @Namespace private var pill
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(ModeChoice.allCases) { choice in
-                let isSelected = choice == selection
-                Button { onSelect(choice) } label: {
-                    Text(choice.title)
-                        .font(.callout.weight(isSelected ? .semibold : .regular))
-                        .foregroundStyle(isSelected ? choice.tint : .secondary)
-                        .frame(maxWidth: .infinity, minHeight: 26)
-                        .contentShape(Rectangle())
-                        .background {
-                            if isSelected {
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(.background)
-                                    .shadow(color: .black.opacity(0.12), radius: 1.5, y: 0.5)
-                                    .matchedGeometryEffect(id: "pill", in: pill)
-                            }
-                        }
-                }
+                .menuStyle(.button)
                 .buttonStyle(.plain)
-                .disabled(disabled.contains(choice))
-                .opacity(disabled.contains(choice) ? 0.4 : 1)
-                .help(disabled.contains(choice) ? "Sign in to account \(choice.title) first" : "")
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .menuIndicator(.hidden)
             }
+            MenuItem(title: "Open claude.ai") { model.openWeb(model.snapshot.next) }
+                .help("claude.ai signed in as account \(label), in its own browser window")
+        } else {
+            MenuItem(title: "Sign In to Account \(label)…") { model.signIn(model.snapshot.next) }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.07)))
-        .animation(.snappy(duration: 0.22), value: selection)
     }
+
+    private var hookPrompt: some View {
+        VStack(alignment: .leading, spacing: Theme.stackGap) {
+            Text("Make plain `claude` follow the switch?").font(Theme.body)
+            Text("Adds a small hook to your shell config. You can undo it in Settings.")
+                .font(Theme.detail)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Theme.rowSpacing) {
+                Button("Turn On") { model.setHook(true) }
+                    .buttonStyle(.borderedProminent)
+                Button("Not Now") { model.dismissHookBanner() }
+                    .buttonStyle(.bordered)
+            }
+            .controlSize(.small)
+        }
+        .padding(.horizontal, Theme.rowPaddingH)
+        .padding(.vertical, Theme.rowPaddingV)
+    }
+
+    private func messageRow(_ message: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.rowSpacing) {
+            Text(message)
+                .font(Theme.detail)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button { model.dismissMessage() } label: {
+                Image(systemName: "xmark").font(Theme.detail.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.horizontal, Theme.rowPaddingH)
+        .padding(.vertical, Theme.rowPaddingV)
+    }
+
+    private func staleError(_ state: AccountState) -> String? {
+        guard state.isSignedIn, let error = model.liveErrors[state.account],
+              let updated = state.usage?.updatedAt, Date.now.timeIntervalSince(updated) > 300 else { return nil }
+        return error
+    }
+
+    static func displayPath(_ path: String) -> String {
+        let home = System.home.path
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+    }
+}
+
+/// A row-shaped label for native Menus (submenu chevron on the right).
+func menuLabel(_ title: String) -> some View {
+    HStack {
+        Text(title).font(Theme.body)
+        Spacer(minLength: Theme.rowSpacing)
+        Image(systemName: "chevron.right").font(Theme.detail.weight(.semibold)).foregroundStyle(.tertiary)
+    }
+    .padding(.horizontal, Theme.rowPaddingH)
+    .padding(.vertical, Theme.rowPaddingV)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(Rectangle())
 }

@@ -39,7 +39,7 @@ usage_file() {  # usage_file <acct> <5h> <7d>
 }
 
 setup
-check "version" "ccx 1.0.1" "$("$CCX" version)"
+check "version" "ccx 1.1.0" "$("$CCX" version)"
 check "help" "ccx use a|b|auto" "$("$CCX" help)"
 check "a runs default config" "RUN dir=default" "$("$CCX" a -c 2>&1)"
 check "a passes args" "args=-c --model x" "$("$CCX" a -c --model x 2>&1)"

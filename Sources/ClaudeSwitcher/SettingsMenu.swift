@@ -43,15 +43,20 @@ struct SettingsMenu: View {
             }
 
             Section {
+                Button("Refresh Usage") { Task { await model.refreshLive() } }
+                Button("Re-sync Account B Settings") { model.sync() }
+            }
+
+            Section {
                 Link("Help & Source Code", destination: URL(string: "https://github.com/hamdalaa/claude-switcher")!)
                 Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
             }
         } label: {
-            Label("Settings", systemImage: "gearshape")
+            menuLabel("Settings")
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
         .help("Terminal, shell integration, login item, alerts")
     }
 

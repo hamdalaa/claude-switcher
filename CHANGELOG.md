@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- New design: the panel is now a native macOS menu. Click an account to switch (✓ marks it), the active account expands with its meters, an Auto switch sits in the header, and color is used only for identity and warnings
+- Actions ("New Claude Code Session", "Open in Recent Folder", "Open claude.ai") act on the active account; right-click a row for the other one
+- Refresh Usage and Re-sync Account B moved into Settings
+- One-line install: `brew install --cask hamdalaa/tap/claude-switcher`
+- Copy-paste prompt so an AI agent can install and set it up; AGENTS.md and llms.txt for AI tools
+
 ## 1.0.1
 
 - Usage held from an earlier read now drops to 0% once its window resets (Auto no longer misled by a failing refresh)
