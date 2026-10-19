@@ -163,7 +163,7 @@ struct PanelView: View {
 }
 
 /// A row-shaped label for native Menus (submenu chevron on the right).
-func menuLabel(_ title: String) -> some View {
+@MainActor func menuLabel(_ title: String) -> some View {
     HStack {
         Text(title).font(Theme.body)
         Spacer(minLength: Theme.rowSpacing)
