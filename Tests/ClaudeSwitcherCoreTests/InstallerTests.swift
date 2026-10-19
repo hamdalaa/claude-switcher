@@ -142,7 +142,7 @@ private struct Fixture {
     process.waitUntilExit()
     let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     #expect(out.contains("Claude Code isn't installed"))   // hook → ccx run → explains missing claude
-    #expect(out.contains("ccx 1.1.0"))
+    #expect(out.contains("ccx 1.1.1"))
 }
 
 @Test func refusesToRewriteNonUTF8Rc() throws {

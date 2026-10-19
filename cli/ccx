@@ -22,7 +22,7 @@
 # moves tokens; switching just picks which config dir claude starts with.
 set -euo pipefail
 
-CCX_VERSION="1.1.0"
+CCX_VERSION="1.1.1"
 
 A_DIR="$HOME/.claude"
 B_DIR="$HOME/.claude-b"

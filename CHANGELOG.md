@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Menu bar shows both limits for the active account: `D:56% W:87%` (D = 5-hour window, W = weekly)
+
 ## 1.1.0
 
 - New design: the panel is now a native macOS menu. Click an account to switch (✓ marks it), the active account expands with its meters, an Auto switch sits in the header, and color is used only for identity and warnings
