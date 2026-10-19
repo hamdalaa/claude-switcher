@@ -57,7 +57,7 @@ codesign --verify --strict "$APP"
 ZIP="dist/Claude-Switcher-$VERSION.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
-shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+(cd dist && shasum -a 256 "${ZIP:t}" | tee "${ZIP:t}.sha256")   # bare filename so `shasum -c` works anywhere
 echo "Built $APP ($VERSION, $(lipo -archs "$APP/Contents/MacOS/$BIN"))"
 
 if [[ "${1:-}" == --install ]]; then
