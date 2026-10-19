@@ -26,7 +26,4 @@ enum Theme {
         default: .green
         }
     }
-
-    /// Codex gets a neutral graphite identity so it never reads as a third Claude account.
-    static let codexTint = Color.primary.opacity(0.72)
 }

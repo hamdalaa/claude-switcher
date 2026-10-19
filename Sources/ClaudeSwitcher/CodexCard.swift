@@ -13,14 +13,12 @@ struct CodexCard: View {
     let onDropAvatar: (URL) -> Void
     let onRemoveAvatar: () -> Void
 
-    private let tint = Theme.codexTint
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             identity
             if let usage {
                 VStack(spacing: 7) {
-                    ForEach(usage.windows, id: \.title) { item in
+                    ForEach(Array(usage.windows.enumerated()), id: \.offset) { _, item in
                         UsageRow(title: item.title, window: item.window)
                     }
                 }
@@ -42,7 +40,8 @@ struct CodexCard: View {
                 badge: nil,
                 onChoose: onChooseAvatar,
                 onDrop: onDropAvatar,
-                onRemove: onRemoveAvatar
+                onRemove: onRemoveAvatar,
+                accessibilityName: "Codex"
             ) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
                     .font(.system(size: 13, weight: .bold))

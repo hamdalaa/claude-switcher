@@ -41,8 +41,13 @@ public enum UsageAlert: Equatable, Sendable {
 
     public static func between(old: Usage?, new: Usage?, account: Account, limit: Int = AccountStore.limitPercent) -> UsageAlert? {
         guard let old, let new else { return nil }
-        let before = max(old.fiveHour?.percent ?? 0, old.sevenDay?.percent ?? 0)
-        let after = max(new.fiveHour?.percent ?? 0, new.sevenDay?.percent ?? 0)
+        // Compare only windows both readings report; a missing window is "unknown", not 0%.
+        let pairs = [(old.fiveHour, new.fiveHour), (old.sevenDay, new.sevenDay)]
+            .compactMap { pair -> (Int, Int)? in
+                guard let before = pair.0, let after = pair.1 else { return nil }
+                return (before.percent, after.percent)
+            }
+        guard let before = pairs.map(\.0).max(), let after = pairs.map(\.1).max() else { return nil }
         if before < limit, after >= limit { return .full(account, percent: after) }
         if before >= limit, after < limit { return .available(account) }
         return nil

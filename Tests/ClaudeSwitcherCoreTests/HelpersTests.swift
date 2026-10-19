@@ -35,3 +35,22 @@ import Testing
     #expect(UsageAlert.between(old: u(10, 10), new: u(20, 10), account: .a) == nil)
     #expect(UsageAlert.between(old: nil, new: u(95, 10), account: .a) == nil)
 }
+
+@Test func alertIgnoresMissingWindows() {
+    let full = Usage(fiveHour: UsageWindow(percent: 92, resetsAt: nil), sevenDay: UsageWindow(percent: 40, resetsAt: nil), updatedAt: nil)
+    let onlyWeekly = Usage(fiveHour: nil, sevenDay: UsageWindow(percent: 40, resetsAt: nil), updatedAt: nil)
+    #expect(UsageAlert.between(old: full, new: onlyWeekly, account: .a) == nil)
+    let empty = Usage(fiveHour: nil, sevenDay: nil, updatedAt: nil)
+    #expect(UsageAlert.between(old: full, new: empty, account: .a) == nil)
+}
+
+@Test func normalizedZeroesExpiredWindows() {
+    let now = Date(timeIntervalSince1970: 1000)
+    let usage = Usage(fiveHour: UsageWindow(percent: 95, resetsAt: now.addingTimeInterval(-1)),
+                      sevenDay: UsageWindow(percent: 50, resetsAt: now.addingTimeInterval(60)), updatedAt: nil, isLive: true)
+    let n = usage.normalized(now: now)
+    #expect(n.fiveHour?.percent == 0)
+    #expect(n.fiveHour?.resetsAt == nil)
+    #expect(n.sevenDay?.percent == 50)
+    #expect(n.isLive)
+}

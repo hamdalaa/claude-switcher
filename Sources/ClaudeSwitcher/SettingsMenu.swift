@@ -8,7 +8,7 @@ struct SettingsMenu: View {
     var body: some View {
         Menu {
             Picker("Terminal", selection: Binding(
-                get: { model.terminalChoice?.rawValue ?? "auto" },
+                get: { model.terminalChoice.flatMap { model.installedTerminals.contains($0) ? $0.rawValue : nil } ?? "auto" },
                 set: { model.setTerminal(TerminalApp(rawValue: $0)) }
             )) {
                 Text("Automatic (\(TerminalApp.preferred(installed: model.installedTerminals).displayName))").tag("auto")

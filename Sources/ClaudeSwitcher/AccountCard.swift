@@ -46,7 +46,7 @@ struct AccountCard: View {
         .animation(.snappy(duration: 0.2), value: isNext)
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .accessibilityAddTraits(isNext ? .isSelected : [])
-        .accessibilityAction(named: "Make default") { onSelect() }
+        .accessibilityAction(named: "Make default") { if state.isSignedIn { onSelect() } }
     }
 
     private var identity: some View {
@@ -57,7 +57,8 @@ struct AccountCard: View {
                 badge: state.account.label,
                 onChoose: onChooseAvatar,
                 onDrop: onDropAvatar,
-                onRemove: onRemoveAvatar
+                onRemove: onRemoveAvatar,
+                accessibilityName: "account \(state.account.label)"
             ) {
                 Text(state.account.label)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
@@ -80,10 +81,18 @@ struct AccountCard: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .help(subtitle)
                     Spacer(minLength: 4)
                     badge
                 }
                 .frame(height: 18)
+                if let staleError {
+                    Text(staleError)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -149,12 +158,16 @@ struct AccountCard: View {
     private var subtitle: String {
         guard state.isSignedIn else { return "Account \(state.account.label)" }
         guard let updated = state.usage?.updatedAt else { return liveError ?? "Loading usage…" }
-        let age = updated.timeIntervalSinceNow > -60
+        return updated.timeIntervalSinceNow > -60
             ? "Live"
             : "Updated \(updated.formatted(.relative(presentation: .named)))"
-        // Only surface a failure once the numbers on screen are actually getting old.
-        if let liveError, Date.now.timeIntervalSince(updated) > 300 { return "\(age) · \(liveError)" }
-        return age
+    }
+
+    /// A failed refresh, shown on its own line once the numbers on screen are getting old.
+    private var staleError: String? {
+        guard state.isSignedIn, let liveError, let updated = state.usage?.updatedAt,
+              Date.now.timeIntervalSince(updated) > 300 else { return nil }
+        return liveError
     }
 
     static func displayPath(_ path: String) -> String {

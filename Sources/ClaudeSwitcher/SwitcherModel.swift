@@ -34,6 +34,8 @@ final class SwitcherModel {
     let isDemo: Bool
 
     private var live: [Account: Usage] = [:]
+    /// Which login the held live values belong to; a different login clears them.
+    private var liveEmail: [Account: String] = [:]
     private let reader = LiveUsageReader()
     private let notifier = Notifier()
     private let avatarStore = AvatarStore()
@@ -50,7 +52,11 @@ final class SwitcherModel {
         static let hookBannerDismissed = "hookBannerDismissed"
     }
 
-    var terminal: TerminalApp { terminalChoice ?? TerminalApp.preferred(installed: installedTerminals) }
+    /// The chosen terminal if it's still installed, else the automatic pick.
+    var terminal: TerminalApp {
+        if let terminalChoice, installedTerminals.contains(terminalChoice) { return terminalChoice }
+        return TerminalApp.preferred(installed: installedTerminals)
+    }
     var shellSupportsHook: Bool { Setup.hookFile != nil }
     var showsHookBanner: Bool {
         !isDemo && !hookInstalled && !hookBannerDismissed && shellSupportsHook && snapshot.state(.b).isSignedIn
@@ -81,6 +87,7 @@ final class SwitcherModel {
             refreshSetup()
         }
         Launcher.removeStaleScripts()
+        if notificationsEnabled { notifier.requestPermission() }
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -130,11 +137,15 @@ final class SwitcherModel {
 
     private func readAll() async {
         async let codexRead: Void = readCodex()
-        for account in Account.allCases where store.email(account) != nil {
+        for account in Account.allCases {
+            guard let email = store.email(account) else { forget(account); continue }
+            if liveEmail[account] != email { forget(account); liveEmail[account] = email }
             plans[account] = await reader.plan(account)
             switch await reader.read(account) {
             case .success(let usage):
-                let previous = snapshot.state(account).usage
+                // Diff against the previous live reading (not the merged snapshot, which a
+                // running session's status line may already have moved past the threshold).
+                let previous = live[account]?.normalized()
                 live[account] = usage
                 liveErrors[account] = nil
                 try? store.record(usage, for: account)
@@ -161,18 +172,33 @@ final class SwitcherModel {
         }
     }
 
+    /// Signed out, or a different login in this slot: drop everything held for the old one.
+    private func forget(_ account: Account) {
+        live[account] = nil
+        liveErrors[account] = nil
+        plans[account] = nil
+        liveEmail[account] = nil
+    }
+
     /// Live reads win unless a running session has written newer numbers to the usage file since.
+    /// Windows that have reset since the read count as 0%, so a failing refresh can't hold a
+    /// stale "95%" past its reset (and mislead Auto).
     private func freshest() -> [Account: Usage] {
-        live.filter { account, usage in
+        let now = Date.now
+        return live.filter { account, usage in
             guard let fileDate = store.usage(account)?.updatedAt, let liveDate = usage.updatedAt else { return true }
             return fileDate.timeIntervalSince(liveDate) < 5
-        }
+        }.mapValues { $0.normalized(now: now) }
     }
 
     // MARK: Switching and launching
 
     func setMode(_ mode: Mode) {
         guard !isDemo else { return }
+        if case .pinned(let account) = mode, !snapshot.state(account).isSignedIn {
+            message = "Sign in to account \(account.label) before switching to it"
+            return
+        }
         do {
             try store.setMode(mode)
             message = nil

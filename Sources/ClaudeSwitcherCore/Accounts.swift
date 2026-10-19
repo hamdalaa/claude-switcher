@@ -38,6 +38,16 @@ public struct Usage: Equatable, Sendable {
         self.updatedAt = updatedAt
         self.isLive = isLive
     }
+
+    /// Windows whose reset time has passed count as 0% — a held value must never outlive its window.
+    public func normalized(now: Date = .now) -> Usage {
+        func clean(_ window: UsageWindow?) -> UsageWindow? {
+            guard let window else { return nil }
+            guard let resets = window.resetsAt, resets <= now else { return window }
+            return UsageWindow(percent: 0, resetsAt: nil)
+        }
+        return Usage(fiveHour: clean(fiveHour), sevenDay: clean(sevenDay), updatedAt: updatedAt, isLive: isLive)
+    }
 }
 
 public struct AccountState: Equatable, Sendable, Identifiable {

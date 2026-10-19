@@ -7,7 +7,10 @@ struct PanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            ModeControl(selection: ModeChoice(model.snapshot.mode)) { model.setMode($0.mode) }
+            ModeControl(selection: ModeChoice(model.snapshot.mode),
+                        disabled: Set(Account.allCases.filter { !model.snapshot.state($0).isSignedIn }.map(ModeChoice.init))) {
+                model.setMode($0.mode)
+            }
                 .help("Which account new sessions start on (same as `ccx use`)")
             if model.showsHookBanner { hookBanner }
             VStack(spacing: 8) {
@@ -31,17 +34,17 @@ struct PanelView: View {
                 }
             }
             if model.codexAvailable {
-            CodexCard(
-                usage: model.codex,
-                error: model.codexError,
-                recentProjects: model.recentProjects,
-                onOpen: { model.openCodex(in: $0) },
-                onWeb: { model.openCodexWeb() },
-                avatar: model.avatars["codex"],
-                onChooseAvatar: { model.chooseAvatar("codex") },
-                onDropAvatar: { model.setAvatar("codex", from: $0) },
-                onRemoveAvatar: { model.removeAvatar("codex") }
-            )
+                CodexCard(
+                    usage: model.codex,
+                    error: model.codexError,
+                    recentProjects: model.recentProjects,
+                    onOpen: { model.openCodex(in: $0) },
+                    onWeb: { model.openCodexWeb() },
+                    avatar: model.avatars["codex"],
+                    onChooseAvatar: { model.chooseAvatar("codex") },
+                    onDropAvatar: { model.setAvatar("codex", from: $0) },
+                    onRemoveAvatar: { model.removeAvatar("codex") }
+                )
             }
             if let message = model.message {
                 HStack(alignment: .top, spacing: 6) {
@@ -61,6 +64,10 @@ struct PanelView: View {
         .padding(16)
         .frame(width: Theme.panelWidth)
         .onAppear { model.panelOpened() }
+        // MenuBarExtra may keep this view alive between opens; refresh each time it's shown.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            model.panelOpened()
+        }
     }
 
     private var header: some View {
@@ -143,6 +150,10 @@ enum ModeChoice: String, CaseIterable, Identifiable {
     case auto, a, b
     var id: String { rawValue }
 
+    init(_ account: Account) {
+        self = account == .a ? .a : .b
+    }
+
     init(_ mode: Mode) {
         switch mode {
         case .auto: self = .auto
@@ -179,6 +190,8 @@ enum ModeChoice: String, CaseIterable, Identifiable {
 /// Full-width segmented control; the selected segment takes its account colour.
 private struct ModeControl: View {
     let selection: ModeChoice
+    /// Signed-out accounts can't be switched to.
+    let disabled: Set<ModeChoice>
     let onSelect: (ModeChoice) -> Void
     @Namespace private var pill
 
@@ -202,6 +215,9 @@ private struct ModeControl: View {
                         }
                 }
                 .buttonStyle(.plain)
+                .disabled(disabled.contains(choice))
+                .opacity(disabled.contains(choice) ? 0.4 : 1)
+                .help(disabled.contains(choice) ? "Sign in to account \(choice.title) first" : "")
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }

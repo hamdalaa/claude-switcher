@@ -11,6 +11,7 @@ struct AvatarView<Fallback: View>: View {
     let onChoose: () -> Void
     let onDrop: (URL) -> Void
     let onRemove: () -> Void
+    let accessibilityName: String
     @ViewBuilder let fallback: () -> Fallback
 
     @State private var isHovered = false
@@ -66,5 +67,7 @@ struct AvatarView<Fallback: View>: View {
             if image != nil { Button("Remove Picture", role: .destructive, action: onRemove) }
         }
         .help("Click or drop an image to change the picture")
+        .accessibilityLabel("Picture for \(accessibilityName)")
+        .accessibilityHint("Choose a new picture")
     }
 }

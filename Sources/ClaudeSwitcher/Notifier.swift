@@ -28,7 +28,19 @@ final class Notifier {
             content.body = "Its usage limit has reset."
         }
         content.sound = .default
-        requestPermission()
-        center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        // Deliver once allowed; if the user hasn't been asked yet, ask and deliver on yes.
+        Task { @MainActor in
+            switch await center.notificationSettings().authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                try? await center.add(request)
+            case .notDetermined:
+                if (try? await center.requestAuthorization(options: [.alert, .sound])) == true {
+                    try? await center.add(request)
+                }
+            default:
+                break
+            }
+        }
     }
 }
