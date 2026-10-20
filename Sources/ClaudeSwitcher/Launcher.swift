@@ -14,6 +14,12 @@ enum Launcher {
         try openTerminal(running: [try ccx(), account.rawValue] + arguments, in: directory, terminal: terminal)
     }
 
+    /// Checks shared state and active processes before loading the saved conversation.
+    static func resume(_ session: RecentSession, on account: Account, terminal: TerminalApp) throws {
+        try openTerminal(running: [try ccx(), "resume", account.rawValue, session.id],
+                         in: session.directory, terminal: terminal)
+    }
+
     /// `brew upgrade --cask claude-switcher` in a terminal.
     static func brewUpgrade(terminal: TerminalApp) throws {
         try openTerminal(running: ["brew", "upgrade", "--cask", "claude-switcher"], in: System.home.path, terminal: terminal)

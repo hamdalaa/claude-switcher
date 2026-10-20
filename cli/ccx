@@ -13,6 +13,7 @@
 #   ccx remove <acct>    sign out and remove account B, C or D (its folder goes to the Trash)
 #   ccx status           who is signed in where + last-known usage
 #   ccx sync             re-link shared config into the other accounts (runs on every launch)
+#   ccx resume <acct> <session-id> [-- <options>]  check shared state, then resume on that account
 #   ccx version          print the version
 #
 # Account A is Claude Code's normal config (~/.claude). B, C and D live in ~/.claude-b, -c, -d
@@ -33,12 +34,12 @@ LIMIT_PCT=90
 ACCOUNTS=(a b c d)
 
 # Everything account-independent is shared with account A via symlinks.
-SHARED=(CLAUDE.md AGENTS.md rules skills agents commands hooks scripts plugins output-styles
+SHARED=(CLAUDE.md AGENTS.md rules skills agents agent-memory commands hooks scripts plugins output-styles workflows
         settings.json settings.local.json keybindings.json themes projects history.jsonl
-        file-history plans todos)
+        file-history plans todos tasks)
 
 # Directories created in A if missing, so other accounts share them from the first launch.
-SHARED_DIRS=(projects file-history todos plans)
+SHARED_DIRS=(projects file-history todos plans tasks agent-memory workflows)
 
 # Top-level ~/.claude.json keys copied from A on launch. Never the login (oauthAccount etc.).
 SYNC_KEYS='["mcpServers","theme","hasCompletedOnboarding","lastOnboardingVersion","editorMode","autoUpdates"]'
@@ -103,16 +104,27 @@ pick() {
 
 sync_links() {  # sync_links <acct>: link A's shared config into that account's folder
   local target; target=$(dir_of "$1")
-  mkdir -p "$target" "$STATE_DIR"
-  chmod 700 "$target"
-  local dir item
-  for dir in "${SHARED_DIRS[@]}"; do mkdir -p "$A_DIR/$dir"; done
+  mkdir -p "$target" "$STATE_DIR" || return 1
+  chmod 700 "$target" || return 1
+  local dir item status=0
+  for dir in "${SHARED_DIRS[@]}"; do mkdir -p "$A_DIR/$dir" || return 1; done
   for item in "${SHARED[@]}"; do
+    # Accept relative links too, but not dangling links or links to a different account.
+    if [ -L "$target/$item" ] && [ "$target/$item" -ef "$A_DIR/$item" ]; then continue; fi
+    if [ -e "$target/$item" ] || [ -L "$target/$item" ]; then
+      echo "ccx: skip $item (not a shared link in $target; left unchanged)" >&2
+      status=1
+      continue
+    fi
+    if [ -L "$A_DIR/$item" ] && [ ! -e "$A_DIR/$item" ]; then
+      echo "ccx: broken source link: $A_DIR/$item" >&2
+      status=1
+      continue
+    fi
     [ -e "$A_DIR/$item" ] || continue
-    [ -L "$target/$item" ] && continue
-    if [ -e "$target/$item" ]; then echo "ccx: skip $item (real file in $target, not linking over it)" >&2; continue; fi
-    ln -s "$A_DIR/$item" "$target/$item"
+    ln -s "$A_DIR/$item" "$target/$item" || status=1
   done
+  return "$status"
 }
 
 sync_json() {  # sync_json <acct>: merge shared ~/.claude.json keys in, keeping that account's login
@@ -138,7 +150,7 @@ sync_json() {  # sync_json <acct>: merge shared ~/.claude.json keys in, keeping 
 
 sync_account() {
   if [ "$1" = a ]; then return 0; fi
-  sync_links "$1"
+  sync_links "$1" || return 1
   sync_json "$1"
 }
 
@@ -155,14 +167,18 @@ uses_other_auth() {
   [ -n "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}${CLAUDE_CODE_USE_BEDROCK:-}${CLAUDE_CODE_USE_VERTEX:-}" ]
 }
 
-# run_on <acct> <prompt-login: yes|no> [claude args...]
+# run_on <acct> <prompt-login: yes|no|checked> [claude args...]
 run_on() {
   local acct=$1 prompt=$2; shift 2
   need claude "Claude Code isn't installed or isn't on PATH — see https://docs.claude.com/claude-code"
   # Inherited from a parent Claude session these make claude think it's a child (no transcripts).
   unset CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED \
         CLAUDE_PID CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH
-  sync_account "$acct" || true
+  if [ "$prompt" = checked ]; then
+    sync_account "$acct" || die "shared state changed during handoff; run ccx sync and retry"
+  else
+    sync_account "$acct" || true
+  fi
   # Only explicit `ccx <acct>` offers to sign in; `ccx run` (the `claude` hook) stays transparent,
   # so `claude --version`, `claude -p …` and scripts never get a login prompt.
   if [ "$prompt" = yes ] && ! uses_other_auth && [ -z "$(email_of "$acct")" ] && ! logged_in "$acct"; then
@@ -171,6 +187,96 @@ run_on() {
   fi
   if [ "$acct" = a ]; then exec env -u CLAUDE_CONFIG_DIR claude "$@"
   else CLAUDE_CONFIG_DIR="$(dir_of "$acct")" exec claude "$@"; fi
+}
+
+# Checked handoff is deliberately separate from `run`: the shell hook must keep passing
+# arbitrary Claude flags through unchanged. No prompt, summary, model call, or transcript
+# rewrite is needed to hand off a saved conversation.
+resume_on() {
+  [ "$#" -ge 2 ] || die "usage: ccx resume <acct> <session-id> [-- <options>]"
+  local acct=$1 session=$2; shift 2
+  check_acct "$acct"
+  [[ "$session" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || die "use an exact session ID, not a name or path"
+  is_configured "$acct" || die "account $(upper "$acct") isn't set up yet — run: ccx login $acct"
+  need claude "Claude Code isn't installed or isn't on PATH"
+  # An inherited API key/provider override would bypass the selected subscription.
+  if uses_other_auth || [ -n "${CLAUDE_CODE_USE_FOUNDRY:-}" ]; then
+    die "checked handoff requires account authentication; unset API-key/provider overrides first, or use ccx run for an explicit provider session"
+  fi
+  if [ "$#" -gt 0 ]; then
+    [ "$1" = -- ] || die "put explicit Claude configuration options after --"
+    shift
+  fi
+  # Configuration can contain secrets (e.g. inline MCP config). Forward it as argv,
+  # never log/store it. Do not allow options that change the session, send a prompt,
+  # fork, attach to a background job, or disable persistence.
+  local options=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --model|--agent|--effort|--permission-mode|--mcp-config|--settings|--plugin-dir|--add-dir|--fallback-model|--system-prompt|--append-system-prompt)
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || die "missing value for $1"
+        options+=("$1" "$2"); shift 2 ;;
+      --strict-mcp-config) options+=("$1"); shift ;;
+      *) die "unsupported handoff option (only explicit configuration options are accepted; no prompt was sent)" ;;
+    esac
+  done
+  # Without source-account provenance, validate every configured account. Otherwise
+  # a shared transcript can hide a previous account's private task list or memory.
+  check_session_stopped "$session"
+  sync_all || die "handoff stopped: shared state conflicts. Back up and reconcile the reported paths, then run ccx sync. Nothing was replaced."
+  local transcript="" candidate
+  for candidate in "$A_DIR"/projects/*/"$session.jsonl"; do
+    [ -f "$candidate" ] || continue
+    [ -z "$transcript" ] || die "handoff stopped: session ID exists in more than one project"
+    transcript=$candidate
+  done
+  [ -n "$transcript" ] && [ -s "$transcript" ] || die "saved session not found in shared projects; no new session was started"
+  # Stream the whole JSONL once, retaining only cwd + validation state. Large histories
+  # stay on disk and never become an extra prompt. Reject a partial final write.
+  # A fork can retain parent session IDs, so not every record must have the selected ID.
+  local directory
+  directory=$(jq -nRr --arg session "$session" '
+    reduce inputs as $line
+      ({cwd:null, message:false, hasSession:false, matchesSession:false};
+       ($line | fromjson) as $row |
+       if ($row | type) != "object" then error("invalid record") else . end |
+       if $row.sessionId? != null then .hasSession = true else . end |
+       if $row.sessionId? == $session then .matchesSession = true else . end |
+       if .cwd == null and ($row.cwd? | type) == "string" then .cwd = $row.cwd else . end |
+       if $row.type == "user" or $row.type == "assistant" then .message = true else . end)
+    | if .message and (.hasSession == false or .matchesSession)
+         and (.cwd | type) == "string" and (.cwd | startswith("/"))
+         and (.cwd | test("[\\x00-\\x1f]") | not)
+      then .cwd else error("missing session metadata") end
+  ' "$transcript" 2>/dev/null) || die "handoff stopped: incomplete or unsupported transcript; exit the original session and retry"
+  [ -d "$directory" ] || die "original project folder is unavailable: $directory"
+  check_session_stopped "$session"
+  # Respect token-saving/privacy settings instead of silently overriding them.
+  [ "${CLAUDE_CODE_SKIP_PROMPT_HISTORY:-0}" != 1 ] || die "handoff requires session persistence; unset CLAUDE_CODE_SKIP_PROMPT_HISTORY"
+  [ -z "${CLAUDE_CODE_PROJECT_DIR_NAME:-}" ] || die "custom CLAUDE_CODE_PROJECT_DIR_NAME is not supported by checked handoff"
+  echo "ccx: resuming saved session on account $(upper "$acct"). No summary or extra prompt is generated." >&2
+  echo "ccx: use the same model/tools; normal Claude resume usage and cache rules still apply." >&2
+  cd -- "$directory" || die "couldn't open the original project folder"
+  # Bash 3.2 (shipped by macOS) treats an empty array as unset under `set -u`.
+  run_on "$acct" checked --resume "$session" ${options[@]+"${options[@]}"}
+}
+
+check_session_stopped() {
+  local session=$1 acct registry pid
+  # Native registry is account-local, not shared: sharing it could make Claude attach
+  # to A's running process when we intend a new process authenticated as B.
+  for acct in $(configured); do
+    for registry in "$(dir_of "$acct")"/sessions/*.json; do
+      [ -f "$registry" ] || continue
+      pid=$(jq -er --arg session "$session" '
+        select(.sessionId == $session) | .pid |
+        select(type == "number" and . > 0 and . == floor)
+      ' "$registry" 2>/dev/null) || continue
+      if kill -0 "$pid" 2>/dev/null; then
+        die "session is still running on account $(upper "$acct") (PID $pid). Exit or stop it in Claude Code before resuming; no process was killed."
+      fi
+    done
+  done
 }
 
 remove_account() {
@@ -214,7 +320,7 @@ show_status() {
 
 case "${1:-}" in
   version|--version|-v) echo "ccx $CCX_VERSION"; exit 0 ;;
-  -h|--help|help) sed -n '5,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help|help) sed -n '/^#   ccx /,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
 esac
 
 need jq "jq is required (built into macOS 15+, or: brew install jq)"
@@ -233,6 +339,7 @@ case "${1:-}" in
   logout)   check_acct "${2:-}"; need claude "Claude Code isn't installed or isn't on PATH"; with_env "$2" claude auth logout ;;
   remove)   check_acct "${2:-}"; remove_account "$2" ;;
   run)      shift; run_on "$(pick)" no "$@" ;;
+  resume)   shift; resume_on "$@" ;;
   which)    pick ;;
   status|usage) show_status ;;
   sync|setup)   if sync_all; then echo "accounts synced with A's settings"; else exit 1; fi ;;
