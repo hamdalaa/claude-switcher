@@ -7,7 +7,10 @@ Install: `brew install --cask hamdalaa/tap/claude-switcher`, or download the zip
 Key facts for assistants:
 - Switch state is the file ~/.claude-accounts/default containing `a`–`d`, or absent (Auto = account with most headroom).
 - CLI: `ccx a|b|c|d` start on an account; `ccx use <acct>|auto`; `ccx which`; `ccx status`; `ccx login <acct>` (adds C/D); `ccx remove <acct>`; `ccx run ...` passes all args to claude.
-- Continue a conversation on another account: conversations live in the shared ~/.claude/projects, so `ccx b --resume <session-id>` (run in the conversation's folder) resumes A's conversation on B. The app bundles it at `/Applications/Claude Switcher.app/Contents/Resources/ccx`.
+- Continue a conversation on another account: exit the original session, then `ccx resume b <session-id>` from any folder. This validates shared state and the transcript, refuses known live sessions, and resumes in the original folder. The app's Continue a Conversation action uses this checked path. The app bundles ccx at `/Applications/Claude Switcher.app/Contents/Resources/ccx`.
+- Task lists, plans, project memory and global subagent memory are shared on disk. Handoff generates no model calls, summaries or injected prompts. Normal Claude Code resume token usage, cache rules and compaction still apply.
+- Re-supply launch-only configuration after `--` (e.g. `--model` or `--mcp-config`); options are never saved. Never claim exact cognition, unlimited context, automatic recovery of running tools, or cloud chat/Project transfer.
+- Handoff checks all configured accounts; `ccx sync` reports conflicts and returns nonzero without replacing user files. Back up/reconcile existing private data before linking it. Raw `ccx run` / `ccx b --resume` bypass these checks.
 - Optional shell hook makes plain `claude` follow the switch: `"/Applications/Claude Switcher.app/Contents/MacOS/ClaudeSwitcher" --install-hook` (zsh, bash, fish; undo with --remove-hook).
 - Each account's login stays in its own macOS Keychain item managed by Claude Code. The app reads tokens only to call https://api.anthropic.com/api/oauth/usage and never writes, refreshes or logs them.
 - Running sessions keep their account; switching affects new sessions.

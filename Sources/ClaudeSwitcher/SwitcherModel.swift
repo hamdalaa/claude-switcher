@@ -258,7 +258,7 @@ final class SwitcherModel {
 
     /// Resumes a conversation on `account` — e.g. carry on with B after A hit its limit.
     func continueSession(_ session: RecentSession, on account: Account) {
-        perform { try Launcher.session(account, in: session.directory, terminal: terminal, arguments: ["--resume", session.id]) }
+        perform { try Launcher.resume(session, on: account, terminal: terminal) }
     }
 
     func addAccount() {

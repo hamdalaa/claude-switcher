@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Share task lists (`tasks/`), persistent subagent memory (`agent-memory/`) and saved workflows
+  (`workflows/`) across accounts, creating the shared directories before the first launch.
+- Route **Continue a Conversation** through `ccx resume <account> <session-id>`: validate shared
+  state and the persisted transcript, return to the original folder, and refuse known live sessions.
+- Report conflicting real files and dangling/wrong symlinks without replacing them; `ccx sync`
+  now exits nonzero on conflicts. Checked handoff validates all configured accounts.
+- Handoff performs no model calls, generates no summaries and injects no prompt. Explicit launch
+  configuration can be re-supplied after `--`; raw `ccx run` remains a transparent passthrough.
+- Document normal resume usage, cache and compaction limits, and a real-account validation checklist.
+
 ## 1.2.0
 
 - **Continue a Conversation:** pick up a recent conversation on the active account, e.g. carry on with B after A hits its limit (`claude --resume`, history is shared)
