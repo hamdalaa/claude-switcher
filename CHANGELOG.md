@@ -19,6 +19,9 @@
   A Codex CLI that hangs can no longer stall every usage refresh.
 - A failed update check (e.g. no network at login) is retried at the next poll, not a day later.
 - Updating the app re-links shared folders into every account right away.
+- Removing an account waits out every running usage refresh and new ones skip it, so a late read
+  can't bring back its usage file or folder. `ccx remove` refuses while that account has a Claude
+  Code session running.
 
 ## 1.2.1
 

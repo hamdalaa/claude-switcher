@@ -146,6 +146,11 @@ usage_file d 10 30
 check "auto picks d (lowest 5h)" "d" "$("$CCX" which)"
 "$CCX" use c >/dev/null
 check "pin c" "RUN dir=$HOME/.claude-c" "$("$CCX" run 2>&1)"
+mkdir -p "$HOME/.claude-c/sessions"
+jq -nc --argjson pid "$$" '{sessionId:"live",pid:$pid}' > "$HOME/.claude-c/sessions/live.json"
+check "remove refuses a running session" "has a session running" "$("$CCX" remove c 2>&1)"
+check "c kept while running" "kept" "$([ -d "$HOME/.claude-c" ] && echo kept || echo gone)"
+echo '{"sessionId":"old","pid":2147483647}' > "$HOME/.claude-c/sessions/live.json"
 check "remove c" "account C removed" "$("$CCX" remove c 2>&1)"
 check "c folder gone" "gone" "$([ -d "$HOME/.claude-c" ] && echo still || echo gone)"
 check "c folder is in the Trash" ".claude-c-" "$(ls -A "$HOME/.Trash")"

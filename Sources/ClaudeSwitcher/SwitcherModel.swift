@@ -50,6 +50,9 @@ final class SwitcherModel {
     private var timer: Timer?
     private var poller: Task<Void, Never>?
     private var inFlight: Task<Void, Never>?
+    /// Accounts being removed: refreshes skip them so a late read can't rewrite their usage
+    /// file or have Claude Code recreate the folder.
+    private var removing: Set<Account> = []
     /// The usage endpoint rate-limits when polled faster than this.
     static let pollInterval: Duration = .seconds(180)
     private var history: URL { store.paths.home.appending(path: ".claude/history.jsonl") }
@@ -178,12 +181,14 @@ final class SwitcherModel {
         let configured = Set(store.configuredAccounts())
         for account in Account.allCases {
             // Re-check per account: one may have been removed while this read was in flight.
-            guard configured.contains(account), store.configuredAccounts().contains(account),
+            guard configured.contains(account), !removing.contains(account),
+                  store.configuredAccounts().contains(account),
                   let email = store.email(account) else { forget(account); continue }
             if liveEmail[account] != email { forget(account); liveEmail[account] = email }
             plans[account] = await reader.plan(account)
             switch await reader.read(account) {
             case .success(let usage):
+                guard !removing.contains(account) else { continue }   // removed while reading
                 // Diff against the previous live reading (not the merged snapshot, which a
                 // running session's status line may already have moved past the threshold).
                 // Raw, not normalized: once its reset passes a full window already reads 0%,
@@ -282,8 +287,12 @@ final class SwitcherModel {
         alert.buttons.first?.hasDestructiveAction = true
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        removing.insert(account)
         Task {
-            if let inFlight { await inFlight.value }   // don't let a running refresh recreate it
+            defer { removing.remove(account) }
+            // Wait out every refresh already running; new ones skip this account.
+            var waited: Task<Void, Never>?
+            while let current = inFlight, current != waited { waited = current; await current.value }
             do {
                 try await Launcher.removeAccount(account)
                 forget(account)

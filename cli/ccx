@@ -286,6 +286,15 @@ remove_account() {
   [ -d "$target" ] || die "account $(upper "$acct") isn't set up"
   # Only ever delete our own ~/.claude-<b|c|d> folder (never a path built from an empty variable).
   [[ -n "$HOME" && "$target" == "$HOME/.claude-"[b-d] ]] || die "refusing to remove $target"
+  # A running session would recreate the folder (and keep using the login) right after the move.
+  local registry pid
+  for registry in "$target"/sessions/*.json; do
+    [ -f "$registry" ] || continue
+    pid=$(jq -er '.pid | select(type == "number" and . > 0 and . == floor)' "$registry" 2>/dev/null) || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      die "account $(upper "$acct") has a session running (PID $pid). Exit it first; nothing was removed."
+    fi
+  done
   if command -v claude >/dev/null 2>&1; then
     with_env "$acct" claude auth logout >/dev/null 2>&1 || true
   else
