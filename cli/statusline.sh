@@ -30,12 +30,31 @@ record() {
     . as $old | $new + {five_hour: newer($old.five_hour; $new.five_hour),
                         seven_day: newer($old.seven_day; $new.seven_day)}' "$file" 2>/dev/null) || merged=$1
   [ -n "$merged" ] || merged=$1   # empty or unreadable file
+  # Unchanged → no write. Most redraws end here, and a status line killed mid-redraw can't leak.
+  [ "$(cat "$file" 2>/dev/null)" = "$merged" ] && return
+  # Claude Code kills a status line that's still running when it redraws; don't leave the temp file.
+  trap 'rm -f -- "${tmp:-}"; exit 143' HUP INT TERM
   tmp=$(mktemp "$STATE_DIR/.$me.XXXXXX") || return
-  printf '%s' "$merged" > "$tmp" && mv "$tmp" "$file" || rm -f "$tmp"
+  printf '%s' "$merged" > "$tmp" && mv "$tmp" "$file" || rm -f -- "$tmp"
+  trap - HUP INT TERM
 }
 
+# Sweep temp files left by a status line that was SIGKILLed mid-write (traps can't catch that),
+# and markers of sessions that ended long ago.
+find "$STATE_DIR" -maxdepth 1 -type f -name '.[a-d].??????' -mmin +1 -delete 2>/dev/null
+find "$STATE_DIR/.seen" -type f -mmin +1440 -delete 2>/dev/null
+
 limits=$(jq -c '.rate_limits // empty' <<<"$input" 2>/dev/null)
-if [ -n "$me" ] && [ -n "$limits" ] && [ "$limits" != "{}" ]; then record "$limits"; fi
+session=$(jq -r '.session_id // empty' <<<"$input" 2>/dev/null | tr -cd 'A-Za-z0-9_-')
+if [ -n "$me" ] && [ -n "$limits" ] && [ "$limits" != "{}" ]; then
+  # An idle session redraws with the numbers from its last request. Record each session's numbers
+  # only when they change, so it can't keep replaying an old reading over a newer live one.
+  seen="$STATE_DIR/.seen/$session"
+  if [ -z "$session" ] || [ "$(cat "$seen" 2>/dev/null)" != "$limits" ]; then
+    record "$limits"
+    if [ -n "$session" ]; then mkdir -p "$STATE_DIR/.seen" && printf '%s' "$limits" > "$seen"; fi
+  fi
+fi
 
 RED=$'\e[31m'; YEL=$'\e[33m'; GRN=$'\e[32m'; DIM=$'\e[2m'; BOLD=$'\e[1m'; RST=$'\e[0m'
 

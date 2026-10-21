@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.2
+
+- **Usage no longer freezes when an account sits idle.** Once an account's sign-in expired (about 8
+  hours without a session), the app asked Claude Code to renew it with `claude auth status`, which no
+  longer refreshes tokens, so that account's usage stayed stuck. It now renews with the local
+  `/usage` command in print mode: no model request, no tokens, no transcript, no hooks, no MCP
+  servers. A token revoked early (HTTP 401) is renewed too.
+- **"Account X is available again" works.** It compared against an already-reset reading, so it
+  could never fire.
+- **Idle sessions can't undo a newer reading.** The status line now records a session's numbers only
+  when they change, and skips the write when nothing changed.
+- The status line no longer leaves `.a.XXXXXX` temp files in `~/.claude-accounts/usage` when Claude
+  Code stops it mid-redraw (and sweeps up old ones).
+- An account with no usage yet shows why (signed out, expired, offline) instead of "loading usage…"
+  forever.
+- Codex errors are readable ("Signed out — run codex login") instead of a raw HTTP dump.
+  A Codex CLI that hangs can no longer stall every usage refresh.
+- A failed update check (e.g. no network at login) is retried at the next poll, not a day later.
+- Updating the app re-links shared folders into every account right away.
+
 ## 1.2.1
 
 - **Usage numbers fixed.** An idle Claude Code session keeps redrawing its status line with the usage

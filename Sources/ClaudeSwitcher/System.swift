@@ -106,7 +106,7 @@ enum System {
     /// not at pipe EOF, which a background grandchild (e.g. an agent started from .zshrc) can
     /// hold open forever. Interactive shells ignore SIGTERM, so a timeout escalates to SIGKILL.
     static func run(_ executable: String, _ args: [String], environment: [String: String],
-                    timeout: TimeInterval = 30) async -> Result {
+                    directory: URL? = nil, timeout: TimeInterval = 30) async -> Result {
         await withCheckedContinuation { continuation in
             let process = Process()
             let pipe = Pipe()
@@ -114,6 +114,7 @@ enum System {
             process.executableURL = URL(filePath: executable)
             process.arguments = args
             process.environment = environment
+            if let directory { process.currentDirectoryURL = directory }
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = pipe
             process.standardError = pipe

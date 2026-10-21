@@ -84,6 +84,10 @@ actor LiveUsageReader {
             state.backoff = 60
         case 401, 403:
             Self.log.notice("usage \(account.rawValue, privacy: .public): HTTP \(code, privacy: .public)")
+            // A token revoked before its expiry (e.g. rotated by another device): renew, retry next poll.
+            if code == 401, await renew(account, state: &state, now: now) != nil {
+                return .failure(.unavailable("Renewed sign-in — refreshing"))
+            }
             return .failure(.rejected)
         case 429:
             let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After")
@@ -121,7 +125,9 @@ actor LiveUsageReader {
         return nil
     }
 
-    /// `claude auth status` makes Claude Code refresh its own token if needed. Throttled.
+    /// Makes Claude Code refresh its own token. `claude auth status` no longer does (2.1.x), but
+    /// running the local `/usage` command in print mode does — no model request, no tokens spent,
+    /// no transcript, no hooks, no MCP servers. Throttled.
     private func renew(_ account: Account, state: inout State, now: Date) async -> Credentials? {
         if let last = state.lastRenew, now.timeIntervalSince(last) < Self.renewInterval { return nil }
         // claude creates CLAUDE_CONFIG_DIR if missing; never resurrect a just-removed account.
@@ -131,11 +137,19 @@ actor LiveUsageReader {
         if account != .a { extra["CLAUDE_CONFIG_DIR"] = paths.configDir(account).path }
         var env = await System.toolEnvironment(extra: extra)
         if account == .a { env["CLAUDE_CONFIG_DIR"] = nil }
-        _ = await System.run("/usr/bin/env", ["claude", "auth", "status"], environment: env)
-        guard let fresh = await loadCredentials(account), !fresh.isExpired() else { return nil }
+        _ = await System.run("/usr/bin/env", Self.renewArguments, environment: env,
+                             directory: paths.stateRoot, timeout: 60)
+        guard let fresh = await loadCredentials(account), !fresh.isExpired() else {
+            Self.log.notice("usage \(account.rawValue, privacy: .public): Claude Code didn't renew its sign-in")
+            return nil
+        }
         Self.log.info("usage \(account.rawValue, privacy: .public): Claude Code renewed its sign-in")
         return fresh
     }
+
+    static let renewArguments = ["claude", "-p", "/usage", "--no-session-persistence", "--output-format", "json",
+                                 "--settings", #"{"disableAllHooks":true}"#,
+                                 "--strict-mcp-config", "--mcp-config", #"{"mcpServers":{}}"#]
 }
 
 /// The request carries a bearer token; following a redirect could hand it to another host.

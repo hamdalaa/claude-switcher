@@ -107,7 +107,7 @@ struct AccountRow: View {
         if let usage = state.usage {
             if let five = usage.fiveHour { parts.append(percentText("5h", five.percent)) }
             if let week = usage.sevenDay { parts.append(percentText("week", week.percent)) }
-        } else {
+        } else if staleError == nil {   // the error line below says why there's nothing
             parts.append(Text("loading usage…").foregroundColor(.secondary))
         }
         return parts

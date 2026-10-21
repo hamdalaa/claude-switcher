@@ -56,7 +56,7 @@ usage_file() {  # usage_file <acct> <5h> <7d>
 }
 
 setup
-check "version" "ccx 1.2.1" "$("$CCX" version)"
+check "version" "ccx 1.2.2" "$("$CCX" version)"
 check "help" "ccx use <acct>|auto" "$("$CCX" help)"
 check "a runs default config" "RUN dir=default" "$("$CCX" a -c 2>&1)"
 check "a passes args" "args=-c --model x" "$("$CCX" a -c --model x 2>&1)"
@@ -329,6 +329,16 @@ check "statusline ignores an older window" '"used_percentage":2' "$(jq -c .five_
 sl "" 7 9000018000 99
 check "statusline recovers from an empty file" '"used_percentage":7' "$(jq -c .five_hour "$U/a.json")"
 equal "statusline leaves no temp files" "" "$(ls -A "$U" | grep -v '^[a-d]\.json$')"
+# An idle session redrawing its last numbers must not undo a newer (lower) live reading.
+idle='{"session_id":"s-1","rate_limits":{"five_hour":{"used_percentage":30,"resets_at":9000018000}}}'
+env -u CLAUDE_CONFIG_DIR "$SL" <<<"$idle" >/dev/null
+check "statusline records a session's first reading" '"used_percentage":30' "$(jq -c .five_hour "$U/a.json")"
+printf '%s' '{"five_hour":{"used_percentage":10,"resets_at":9000018000}}' > "$U/a.json"
+env -u CLAUDE_CONFIG_DIR "$SL" <<<"$idle" >/dev/null
+check "statusline doesn't replay an idle session's old reading" '"used_percentage":10' "$(jq -c .five_hour "$U/a.json")"
+touch -t 202001010000 "$U/.a.ABCDEF"
+env -u CLAUDE_CONFIG_DIR "$SL" <<<"$idle" >/dev/null
+equal "statusline sweeps temp files left by a killed run" "no" "$([ -e "$U/.a.ABCDEF" ] && echo yes || echo no)"
 teardown
 
 echo "ccx tests: $PASS passed, $FAIL failed"

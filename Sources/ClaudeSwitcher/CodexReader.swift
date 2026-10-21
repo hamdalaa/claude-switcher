@@ -48,7 +48,13 @@ enum CodexReader {
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { throw Failure.unavailable("Codex CLI not found") }
 
-        let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        // A codex that ignores SIGTERM would block this read — and with it every usage refresh.
+        let pid = process.processIdentifier
+        let killer = DispatchWorkItem {
+            guard process.isRunning else { return }
+            process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if process.isRunning { kill(pid, SIGKILL) } }
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
         defer {
             killer.cancel()
@@ -88,7 +94,7 @@ enum CodexReader {
                 case 2:
                     guard let result = value["result"] else {
                         let message = (value["error"] as? [String: Any])?["message"] as? String
-                        throw Failure.unavailable(message.map { "Codex: \($0)" } ?? "Sign in to Codex (codex login)")
+                        throw Failure.unavailable(CodexAPI.friendlyError(message))
                     }
                     limits = try JSONSerialization.data(withJSONObject: result)
                 case 3:

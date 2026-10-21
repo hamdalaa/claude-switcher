@@ -184,8 +184,10 @@ struct PanelView: View {
     }
 
     private func staleError(_ state: AccountState) -> String? {
-        guard state.isSignedIn, let error = model.liveErrors[state.account],
-              let updated = state.usage?.updatedAt, Date.now.timeIntervalSince(updated) > 300 else { return nil }
+        guard state.isSignedIn, let error = model.liveErrors[state.account] else { return nil }
+        // No usage yet: say why, instead of "loading usage…" forever.
+        guard let usage = state.usage else { return error }
+        guard let updated = usage.updatedAt, Date.now.timeIntervalSince(updated) > 300 else { return nil }
         return error
     }
 

@@ -16,7 +16,7 @@ enum Setup {
     static func cliState() -> CLIState { installer.cliState() }
     static func installCLI() throws { try installer.installCLI() }
     static func removeCLI() throws { try installer.removeCLI() }
-    static func updateCLIIfManaged() { installer.updateCLIIfManaged() }
+    @discardableResult static func updateCLIIfManaged() -> Bool { installer.updateCLIIfManaged() }
     static func hookInstalled() -> Bool { installer.hookInstalled() }
     static func setHook(_ enabled: Bool) throws { try installer.setHook(enabled) }
 }

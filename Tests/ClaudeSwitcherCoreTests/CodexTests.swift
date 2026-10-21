@@ -33,3 +33,10 @@ import Testing
 @Test func codexRejectsGarbage() {
     #expect(throws: (any Error).self) { try CodexAPI.parse(limits: Data("[]".utf8), account: nil) }
 }
+
+@Test func codexErrorsAreReadable() {
+    let revoked = #"failed to fetch codex rate limits: GET https://chatgpt.com/backend-api/wham/usage failed: 401 Unauthorized; content-type=text/plain; body={"error":{"code":"token_revoked"}}"#
+    #expect(CodexAPI.friendlyError(revoked) == "Signed out — run codex login")
+    #expect(CodexAPI.friendlyError(nil) == "Sign in to Codex (codex login)")
+    #expect(CodexAPI.friendlyError("failed to fetch codex rate limits: 500 Internal; body={}") == "Codex: failed to fetch codex rate limits: 500 Internal")
+}

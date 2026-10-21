@@ -102,7 +102,8 @@ final class SwitcherModel {
         snapshot = store.snapshot()
         avatars = Self.loadAvatars(avatarStore)
         installedTerminals = System.installedTerminals()
-        Setup.updateCLIIfManaged()
+        // A new ccx may share more folders; link them into every account now, not on next launch.
+        if Setup.updateCLIIfManaged() { Task { try? await Launcher.sync() } }
         refreshSetup()
         Task {
             Setup.shellInfo = await System.shellInfo()
@@ -185,7 +186,9 @@ final class SwitcherModel {
             case .success(let usage):
                 // Diff against the previous live reading (not the merged snapshot, which a
                 // running session's status line may already have moved past the threshold).
-                let previous = live[account]?.normalized()
+                // Raw, not normalized: once its reset passes a full window already reads 0%,
+                // so "available again" could never fire.
+                let previous = live[account]
                 live[account] = usage
                 liveErrors[account] = nil
                 try? store.record(usage, for: account)
@@ -343,7 +346,6 @@ final class SwitcherModel {
             }
             return
         }
-        defaults.set(Date.now, forKey: Self.lastUpdateCheckKey)
         var request = URLRequest(url: Self.releasesAPI)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("ClaudeSwitcher", forHTTPHeaderField: "User-Agent")
@@ -354,6 +356,8 @@ final class SwitcherModel {
             if announce { message = "Couldn't check for updates right now" }
             return
         }
+        // Only a successful check counts: at login the network is often not up yet.
+        defaults.set(Date.now, forKey: Self.lastUpdateCheckKey)
         defaults.set(latest.version, forKey: Self.latestVersionKey)
         defaults.set(latest.url.absoluteString, forKey: Self.latestURLKey)
         update = ReleaseCheck.isNewer(latest.version, than: current) ? latest : nil

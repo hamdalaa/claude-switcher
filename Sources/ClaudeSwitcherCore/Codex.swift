@@ -83,3 +83,20 @@ public enum CodexAPI {
         return known[raw.lowercased()] ?? raw.prefix(1).uppercased() + raw.dropFirst()
     }
 }
+
+extension CodexAPI {
+    /// app-server errors embed the raw HTTP response; show what the user can act on instead.
+    public static func friendlyError(_ message: String?) -> String {
+        guard let message, !message.isEmpty else { return "Sign in to Codex (codex login)" }
+        let lower = message.lowercased()
+        if ["401", "unauthorized", "token_revoked", "token_expired", "invalidated oauth", "not logged in", "login"]
+            .contains(where: lower.contains) {
+            return "Signed out — run codex login"
+        }
+        if lower.contains("429") || lower.contains("too many requests") { return "Codex is rate limiting — try again soon" }
+        if ["timed out", "offline", "network", "connect"].contains(where: lower.contains) { return "Codex is offline" }
+        let firstLine = message.split(separator: "\n").first.map(String.init) ?? message
+        let short = firstLine.split(separator: ";").first.map(String.init) ?? firstLine
+        return "Codex: " + String(short.prefix(80))
+    }
+}
