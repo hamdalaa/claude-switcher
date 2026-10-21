@@ -10,16 +10,32 @@ mkdir -p "$STATE_DIR"
 
 config_dir=${CLAUDE_CONFIG_DIR%/}
 case "$config_dir" in
-  *"/.claude-b") me=b ;;
-  *"/.claude-c") me=c ;;
-  *"/.claude-d") me=d ;;
-  *) me=a ;;
+  ""|"$HOME/.claude") me=a ;;
+  "$HOME/.claude-b") me=b ;;
+  "$HOME/.claude-c") me=c ;;
+  "$HOME/.claude-d") me=d ;;
+  *) me="" ;;   # not one of ours: recording it as A would show another login's usage as A's
 esac
 
+# Merge, don't overwrite: an idle session keeps redrawing with the numbers from its last request.
+# A later reset is a newer window; within one window usage only goes up (same rule as the app).
+record() {
+  local file="$STATE_DIR/$me.json" tmp merged
+  merged=$(jq -c --argjson new "$1" '
+    def newer(o; n):
+      if o == null then n elif n == null then o
+      elif ((o.resets_at // 0) - (n.resets_at // 0)) as $d | ($d < 600 and $d > -600)
+        then (if (o.used_percentage // 0) > (n.used_percentage // 0) then o else n end)
+      elif (o.resets_at // 0) > (n.resets_at // 0) then o else n end;
+    . as $old | $new + {five_hour: newer($old.five_hour; $new.five_hour),
+                        seven_day: newer($old.seven_day; $new.seven_day)}' "$file" 2>/dev/null) || merged=$1
+  [ -n "$merged" ] || merged=$1   # empty or unreadable file
+  tmp=$(mktemp "$STATE_DIR/.$me.XXXXXX") || return
+  printf '%s' "$merged" > "$tmp" && mv "$tmp" "$file" || rm -f "$tmp"
+}
+
 limits=$(jq -c '.rate_limits // empty' <<<"$input" 2>/dev/null)
-if [ -n "$limits" ] && [ "$limits" != "{}" ]; then
-  printf '%s' "$limits" > "$STATE_DIR/$me.json.tmp" && mv "$STATE_DIR/$me.json.tmp" "$STATE_DIR/$me.json"
-fi
+if [ -n "$me" ] && [ -n "$limits" ] && [ "$limits" != "{}" ]; then record "$limits"; fi
 
 RED=$'\e[31m'; YEL=$'\e[33m'; GRN=$'\e[32m'; DIM=$'\e[2m'; BOLD=$'\e[1m'; RST=$'\e[0m'
 

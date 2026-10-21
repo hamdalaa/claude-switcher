@@ -220,15 +220,15 @@ final class SwitcherModel {
         liveEmail[account] = nil
     }
 
-    /// Live reads win unless a running session has written newer numbers to the usage file since.
-    /// Windows that have reset since the read count as 0%, so a failing refresh can't hold a
-    /// stale "95%" past its reset (and mislead Auto).
+    /// Live reads merged with the usage file window by window. A busy session's status line can be
+    /// ahead of the last poll, but an idle one keeps rewriting old numbers, so file age alone
+    /// can't decide. Windows that have reset since the read count as 0%, so a failing refresh
+    /// can't hold a stale "95%" past its reset (and mislead Auto).
     private func freshest() -> [Account: Usage] {
         let now = Date.now
-        return live.filter { account, usage in
-            guard let fileDate = store.usage(account)?.updatedAt, let liveDate = usage.updatedAt else { return true }
-            return fileDate.timeIntervalSince(liveDate) < 5
-        }.mapValues { $0.normalized(now: now) }
+        return Dictionary(uniqueKeysWithValues: live.map { account, usage in
+            (account, usage.normalized(now: now).merged(with: store.usage(account, now: now)))
+        })
     }
 
     // MARK: Switching and launching

@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.2.1
+
+- **Usage numbers fixed.** An idle Claude Code session keeps redrawing its status line with the usage
+  from its last request, and the newest file used to win, so menu bar, meters and Auto could show an
+  old, lower number. Readings are now merged per window: a later reset is a newer window, and within
+  one window the higher percent wins (usage never goes down inside a window). Same rule in the app
+  and the status line.
+- The status line only records accounts it recognises (`~/.claude`, `~/.claude-b`…`-d`). An unknown
+  `CLAUDE_CONFIG_DIR` used to be recorded as account A, mixing another login's usage into A.
+- The status line writes through a unique temp file, so two sessions can't clobber each other's write.
 
 - Share task lists (`tasks/`), persistent subagent memory (`agent-memory/`) and saved workflows
   (`workflows/`) across accounts, creating the shared directories before the first launch.

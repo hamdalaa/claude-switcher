@@ -54,3 +54,36 @@ import Testing
     #expect(n.sevenDay?.percent == 50)
     #expect(n.isLive)
 }
+
+@Test func newerWindowKeepsHigherUseWithinOneWindow() {
+    let reset = Date(timeIntervalSince1970: 18_000)
+    let fresh = UsageWindow(percent: 43, resetsAt: reset.addingTimeInterval(0.2))   // API adds fractions
+    let replayed = UsageWindow(percent: 25, resetsAt: reset)                          // idle session's old number
+    #expect(UsageWindow.newer(fresh, replayed) == fresh)
+    #expect(UsageWindow.newer(replayed, fresh) == fresh)
+}
+
+@Test func newerWindowPrefersLaterReset() {
+    let old = UsageWindow(percent: 95, resetsAt: Date(timeIntervalSince1970: 18_000))
+    let next = UsageWindow(percent: 3, resetsAt: Date(timeIntervalSince1970: 36_000))
+    #expect(UsageWindow.newer(old, next) == next)
+    #expect(UsageWindow.newer(next, old) == next)
+    let reset = UsageWindow(percent: 0, resetsAt: nil)
+    #expect(UsageWindow.newer(reset, next) == next)
+    #expect(UsageWindow.newer(nil, next) == next)
+    #expect(UsageWindow.newer(next, nil) == next)
+}
+
+@Test func mergedCombinesEachWindowAndKeepsLiveFlag() {
+    let r5 = Date(timeIntervalSince1970: 18_000), r7 = Date(timeIntervalSince1970: 600_000)
+    let live = Usage(fiveHour: UsageWindow(percent: 43, resetsAt: r5), sevenDay: UsageWindow(percent: 99, resetsAt: r7),
+                     updatedAt: Date(timeIntervalSince1970: 100), isLive: true)
+    let file = Usage(fiveHour: UsageWindow(percent: 25, resetsAt: r5), sevenDay: UsageWindow(percent: 100, resetsAt: r7),
+                     updatedAt: Date(timeIntervalSince1970: 200))
+    let merged = live.merged(with: file)
+    #expect(merged.fiveHour?.percent == 43)
+    #expect(merged.sevenDay?.percent == 100)
+    #expect(merged.updatedAt == Date(timeIntervalSince1970: 200))
+    #expect(merged.isLive)
+    #expect(live.merged(with: nil) == live)
+}

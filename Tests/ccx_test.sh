@@ -56,7 +56,7 @@ usage_file() {  # usage_file <acct> <5h> <7d>
 }
 
 setup
-check "version" "ccx 1.2.0" "$("$CCX" version)"
+check "version" "ccx 1.2.1" "$("$CCX" version)"
 check "help" "ccx use <acct>|auto" "$("$CCX" help)"
 check "a runs default config" "RUN dir=default" "$("$CCX" a -c 2>&1)"
 check "a passes args" "args=-c --model x" "$("$CCX" a -c --model x 2>&1)"
@@ -301,6 +301,34 @@ refuses_handoff "ambiguous ID" 'more than one project' resume b test-session
 rm "$HOME/.claude/projects/duplicate/test-session.jsonl"
 rmdir "$project"
 refuses_handoff "missing project" 'original project folder is unavailable' resume b test-session
+teardown
+
+# Status line: records the right account, and an idle session can't roll fresh numbers back.
+setup
+SL="$ROOT/cli/statusline.sh"
+sl() {  # sl <config-dir or ""> <5h> <5h-reset> <7d>
+  local json="{\"rate_limits\":{\"five_hour\":{\"used_percentage\":$2,\"resets_at\":$3},\"seven_day\":{\"used_percentage\":$4,\"resets_at\":9999999999}}}"
+  if [ -n "$1" ]; then CLAUDE_CONFIG_DIR=$1 "$SL" <<<"$json" >/dev/null; else env -u CLAUDE_CONFIG_DIR "$SL" <<<"$json" >/dev/null; fi
+}
+U="$HOME/.claude-accounts/usage"
+mkdir -p "$HOME/.claude-c"
+sl "$HOME/.claude-c/" 18 9000000000 3
+check "statusline records C as C" '"used_percentage":18' "$(cat "$U/c.json")"
+equal "statusline leaves A alone for C" "no" "$([ -e "$U/a.json" ] && echo yes || echo no)"
+sl "/somewhere/else" 50 9000000000 50
+equal "statusline ignores unknown config dirs" "no" "$([ -e "$U/a.json" ] && echo yes || echo no)"
+sl "" 43 9000000000 99
+sl "" 25 9000000000 98
+check "statusline keeps the higher reading in one window" '"used_percentage":43' "$(jq -c .five_hour "$U/a.json")"
+check "statusline keeps higher weekly too" '"used_percentage":99' "$(jq -c .seven_day "$U/a.json")"
+sl "" 2 9000018000 99
+check "statusline takes a newer window" '"used_percentage":2' "$(jq -c .five_hour "$U/a.json")"
+sl "" 60 8999990000 99
+check "statusline ignores an older window" '"used_percentage":2' "$(jq -c .five_hour "$U/a.json")"
+: > "$U/a.json"
+sl "" 7 9000018000 99
+check "statusline recovers from an empty file" '"used_percentage":7' "$(jq -c .five_hour "$U/a.json")"
+equal "statusline leaves no temp files" "" "$(ls -A "$U" | grep -v '^[a-d]\.json$')"
 teardown
 
 echo "ccx tests: $PASS passed, $FAIL failed"

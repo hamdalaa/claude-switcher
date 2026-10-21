@@ -25,6 +25,25 @@ public struct UsageWindow: Equatable, Sendable {
         self.percent = percent
         self.resetsAt = resetsAt
     }
+
+    /// Resets this close together are the same window (the API adds sub-second noise; files round).
+    public static let sameWindowTolerance: TimeInterval = 600
+
+    /// The more current of two readings of one limit. A later reset is a newer window; within the
+    /// same window usage never goes down, so the higher percent is the newer reading. That keeps an
+    /// idle session's status line from replaying an old number over a fresh one.
+    public static func newer(_ lhs: UsageWindow?, _ rhs: UsageWindow?) -> UsageWindow? {
+        guard let lhs else { return rhs }
+        guard let rhs else { return lhs }
+        switch (lhs.resetsAt, rhs.resetsAt) {
+        case (nil, nil): return lhs.percent >= rhs.percent ? lhs : rhs
+        case (nil, _): return rhs
+        case (_, nil): return lhs
+        case let (l?, r?):
+            if abs(l.timeIntervalSince(r)) < sameWindowTolerance { return lhs.percent >= rhs.percent ? lhs : rhs }
+            return l > r ? lhs : rhs
+        }
+    }
 }
 
 /// Last-known usage for an account. `updatedAt` is when a session last recorded it.
@@ -50,6 +69,15 @@ public struct Usage: Equatable, Sendable {
             return UsageWindow(percent: 0, resetsAt: nil)
         }
         return Usage(fiveHour: clean(fiveHour), sevenDay: clean(sevenDay), updatedAt: updatedAt, isLive: isLive)
+    }
+
+    /// Combines two readings of one account window by window (see `UsageWindow.newer`).
+    public func merged(with other: Usage?) -> Usage {
+        guard let other else { return self }
+        let updated = [updatedAt, other.updatedAt].compactMap { $0 }.max()
+        return Usage(fiveHour: UsageWindow.newer(fiveHour, other.fiveHour),
+                     sevenDay: UsageWindow.newer(sevenDay, other.sevenDay),
+                     updatedAt: updated, isLive: isLive)
     }
 }
 

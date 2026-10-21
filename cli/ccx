@@ -24,7 +24,7 @@
 # moves tokens; switching just picks which config dir claude starts with.
 set -euo pipefail
 
-CCX_VERSION="1.2.0"
+CCX_VERSION="1.2.1"
 
 A_DIR="$HOME/.claude"
 STATE_ROOT="$HOME/.claude-accounts"
